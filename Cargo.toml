@@ -6,3 +6,5 @@ license = "Apache-2.0"
 include = ["src/**/*.rs", "Cargo.toml", "LICENSE.txt"]
 
 [dependencies]
+bon = "3.3.2"
+sqlparser = "0.54.0"
