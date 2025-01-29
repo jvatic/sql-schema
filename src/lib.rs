@@ -2,6 +2,7 @@ use std::fmt;
 
 use bon::bon;
 use diff::Diff;
+use migration::Migrate;
 use sqlparser::{
     ast::Statement,
     dialect::{Dialect, GenericDialect},
@@ -9,6 +10,7 @@ use sqlparser::{
 };
 
 mod diff;
+mod migration;
 
 #[derive(Debug)]
 pub struct SyntaxTree(Vec<Statement>);
@@ -30,6 +32,10 @@ impl SyntaxTree {
 impl SyntaxTree {
     pub fn diff(&self, other: &SyntaxTree) -> Option<Self> {
         Diff::diff(&self.0, &other.0).map(Self)
+    }
+
+    pub fn migrate(self, other: &SyntaxTree) -> Option<Self> {
+        Migrate::migrate(self.0, &other.0).map(Self)
     }
 }
 
@@ -122,5 +128,57 @@ mod tests {
         let ast_diff = ast_a.diff(&ast_b);
 
         assert_eq!(ast_diff.unwrap().to_string(), sql_diff);
+    }
+
+    #[test]
+    fn apply_create_table() {
+        let sql_a = "CREATE TABLE bar (id INT PRIMARY KEY)";
+        let sql_b = "CREATE TABLE foo (id INT PRIMARY KEY)";
+        let sql_res = sql_a.to_owned() + "\n\n" + sql_b;
+
+        let ast_a = SyntaxTree::builder().sql(sql_a).build().unwrap();
+        let ast_b = SyntaxTree::builder().sql(sql_b).build().unwrap();
+        let ast_res = ast_a.migrate(&ast_b);
+
+        assert_eq!(ast_res.unwrap().to_string(), sql_res);
+    }
+
+    #[test]
+    fn apply_drop_table() {
+        let sql_a = "CREATE TABLE bar (id INT PRIMARY KEY)";
+        let sql_b = "DROP TABLE bar; CREATE TABLE foo (id INT PRIMARY KEY)";
+        let sql_res = "CREATE TABLE foo (id INT PRIMARY KEY)";
+
+        let ast_a = SyntaxTree::builder().sql(sql_a).build().unwrap();
+        let ast_b = SyntaxTree::builder().sql(sql_b).build().unwrap();
+        let ast_res = ast_a.migrate(&ast_b);
+
+        assert_eq!(ast_res.unwrap().to_string(), sql_res);
+    }
+
+    #[test]
+    fn apply_alter_table_add_column() {
+        let sql_a = "CREATE TABLE bar (id INT PRIMARY KEY)";
+        let sql_b = "ALTER TABLE bar ADD COLUMN bar TEXT";
+        let sql_res = "CREATE TABLE bar (id INT PRIMARY KEY, bar TEXT)";
+
+        let ast_a = SyntaxTree::builder().sql(sql_a).build().unwrap();
+        let ast_b = SyntaxTree::builder().sql(sql_b).build().unwrap();
+        let ast_res = ast_a.migrate(&ast_b);
+
+        assert_eq!(ast_res.unwrap().to_string(), sql_res);
+    }
+
+    #[test]
+    fn apply_alter_table_drop_column() {
+        let sql_a = "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY)";
+        let sql_b = "ALTER TABLE bar DROP COLUMN bar";
+        let sql_res = "CREATE TABLE bar (id INT PRIMARY KEY)";
+
+        let ast_a = SyntaxTree::builder().sql(sql_a).build().unwrap();
+        let ast_b = SyntaxTree::builder().sql(sql_b).build().unwrap();
+        let ast_res = ast_a.migrate(&ast_b);
+
+        assert_eq!(ast_res.unwrap().to_string(), sql_res);
     }
 }
