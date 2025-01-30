@@ -2,5 +2,7 @@
 name = "sql-schema"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+include = ["src/**/*.rs", "Cargo.toml", "LICENSE.txt"]
 
 [dependencies]
