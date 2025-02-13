@@ -8,7 +8,28 @@ This crate provides tools for generating schema migrations based on edits to a c
 
 ## Status
 
-This crate is in a very early stage of development and you can expect it not to work just yet.
+This crate is in a very early stage of development and is missing many features.
+
+## Usage
+
+```sh
+# install the cli
+cargo install sql-schema
+
+# generate a schema file from existing migrations
+sql-schema schema \
+    --schema-path ./schema/schema.sql \ # this is the default value
+    --migrations-dir ./schema/migrations # this is the default value
+# -> writing ./schema/schema.sql
+
+# generate a migration after editing the schema file
+sql-schema migration --name my_new_migration \
+    --include-down true \ # default is true if any down migration exists
+    --schema-path ./schema/schema.sql \ # this is the default value
+    --migrations-dir ./schema/migrations # this is the default value
+# -> writing schema/migrations/1739486729_my_new_migration.up.sql
+# -> writing schema/migrations/1739486729_my_new_migration.down.sql
+```
 
 ## Licensing
 
