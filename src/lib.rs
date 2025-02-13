@@ -47,7 +47,12 @@ impl fmt::Display for SyntaxTree {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut iter = self.0.iter().peekable();
         while let Some(s) = iter.next() {
-            write!(f, "{};", s)?;
+            let formatted = sqlformat::format(
+                format!("{s};").as_str(),
+                &sqlformat::QueryParams::None,
+                &sqlformat::FormatOptions::default(),
+            );
+            write!(f, "{formatted}")?;
             if iter.peek().is_some() {
                 write!(f, "\n\n")?;
             }
@@ -107,7 +112,7 @@ mod tests {
                 id int PRIMARY KEY,
                 bar text
             )";
-        let sql_diff = "ALTER TABLE foo ADD COLUMN bar TEXT;";
+        let sql_diff = "ALTER TABLE\n  foo\nADD\n  COLUMN bar TEXT;";
 
         let ast_a = SyntaxTree::builder().sql(sql_a).build().unwrap();
         let ast_b = SyntaxTree::builder().sql(sql_b).build().unwrap();
@@ -125,7 +130,7 @@ mod tests {
         let sql_b = "CREATE TABLE foo(\
                     id int PRIMARY KEY
                 )";
-        let sql_diff = "ALTER TABLE foo DROP COLUMN bar;";
+        let sql_diff = "ALTER TABLE\n  foo DROP COLUMN bar;";
 
         let ast_a = SyntaxTree::builder().sql(sql_a).build().unwrap();
         let ast_b = SyntaxTree::builder().sql(sql_b).build().unwrap();
