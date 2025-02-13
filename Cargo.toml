@@ -6,6 +6,9 @@ license = "Apache-2.0"
 include = ["src/**/*.rs", "Cargo.toml", "LICENSE.txt"]
 
 [dependencies]
+anyhow = "1.0.95"
 bon = "3.3.2"
+camino = "1.1.9"
+clap = { version = "4.5.29", features = ["derive"] }
 sqlformat = "0.3.5"
 sqlparser = "0.54.0"
