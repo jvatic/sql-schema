@@ -27,6 +27,10 @@ impl SyntaxTree {
         let ast = Parser::parse_sql(dialect, sql.into())?;
         Ok(Self(ast))
     }
+
+    pub fn empty() -> Self {
+        Self(vec![])
+    }
 }
 
 impl SyntaxTree {
