@@ -3,6 +3,8 @@ sql-schema
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Build Status](https://github.com/jvatic/sql-schema/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/jvatic/sql-schema/actions?query=workflow%3ARust+branch%3Amain)
+[![Crates.io Version](https://img.shields.io/crates/v/sql-schema)](https://crates.io/crates/sql-schema)
+[![docs.rs](https://img.shields.io/docsrs/sql-schema)](https://docs.rs/sql-schema)
 
 This crate provides tools for generating schema migrations based on edits to a canonical schema file.
 
