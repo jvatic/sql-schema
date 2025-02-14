@@ -116,9 +116,7 @@ fn run_migration(command: MigrationCommand) -> anyhow::Result<()> {
                 .expect("system time should be after epoch")
                 .as_secs();
             if opts.include_down {
-                let down_migration = up_migration
-                    .diff(&SyntaxTree::empty())
-                    .unwrap_or_else(SyntaxTree::empty);
+                let down_migration = schema.diff(&migrations).unwrap_or_else(SyntaxTree::empty);
 
                 write_migration(
                     up_migration,
