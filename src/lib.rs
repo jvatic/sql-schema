@@ -114,142 +114,169 @@ impl fmt::Display for SyntaxTree {
 mod tests {
     use super::*;
 
+    #[derive(Debug)]
+    struct TestCase {
+        dialect: Dialect,
+        sql_a: &'static str,
+        sql_b: &'static str,
+        expect: &'static str,
+    }
+
+    fn run_test_case<F>(tc: &TestCase, testfn: F)
+    where
+        F: Fn(SyntaxTree, SyntaxTree) -> SyntaxTree,
+    {
+        let ast_a = SyntaxTree::builder()
+            .dialect(tc.dialect.clone())
+            .sql(tc.sql_a)
+            .build()
+            .unwrap();
+        let ast_b = SyntaxTree::builder()
+            .dialect(tc.dialect.clone())
+            .sql(tc.sql_b)
+            .build()
+            .unwrap();
+        let actual = testfn(ast_a, ast_b);
+        assert_eq!(actual.to_string(), tc.expect, "{tc:?}");
+    }
+
+    fn run_test_cases<F>(test_cases: Vec<TestCase>, testfn: F)
+    where
+        F: Fn(SyntaxTree, SyntaxTree) -> SyntaxTree,
+    {
+        test_cases
+            .into_iter()
+            .for_each(|tc| run_test_case(&tc, |ast_a, ast_b| testfn(ast_a, ast_b)));
+    }
+
     #[test]
     fn diff_create_table() {
-        let sql_a = "CREATE TABLE foo(\
-                id int PRIMARY KEY
-            )";
-        let sql_b = "CREATE TABLE foo(\
-                id int PRIMARY KEY
-            );\
-            \
-            CREATE TABLE bar (id INT PRIMARY KEY);";
-        let sql_diff = "CREATE TABLE bar (id INT PRIMARY KEY);";
-
-        let ast_a = SyntaxTree::builder().sql(sql_a).build().unwrap();
-        let ast_b = SyntaxTree::builder().sql(sql_b).build().unwrap();
-        let ast_diff = ast_a.diff(&ast_b);
-
-        assert_eq!(ast_diff.unwrap().to_string(), sql_diff);
+        run_test_cases(
+            vec![TestCase {
+                dialect: Dialect::Generic,
+                sql_a: "CREATE TABLE foo(\
+                            id int PRIMARY KEY
+                        )",
+                sql_b: "CREATE TABLE foo(\
+                            id int PRIMARY KEY
+                        );\
+                        CREATE TABLE bar (id INT PRIMARY KEY);",
+                expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
+            }],
+            |ast_a, ast_b| ast_a.diff(&ast_b).unwrap(),
+        );
     }
 
     #[test]
     fn diff_drop_table() {
-        let sql_a = "CREATE TABLE foo(\
-                    id int PRIMARY KEY
-                );\
-                \
-                CREATE TABLE bar (id INT PRIMARY KEY);";
-        let sql_b = "CREATE TABLE foo(\
-                    id int PRIMARY KEY
-                )";
-        let sql_diff = "DROP TABLE bar;";
-
-        let ast_a = SyntaxTree::builder().sql(sql_a).build().unwrap();
-        let ast_b = SyntaxTree::builder().sql(sql_b).build().unwrap();
-        let ast_diff = ast_a.diff(&ast_b);
-
-        assert_eq!(ast_diff.unwrap().to_string(), sql_diff);
+        run_test_cases(
+            vec![TestCase {
+                dialect: Dialect::Generic,
+                sql_a: "CREATE TABLE foo(\
+                        id int PRIMARY KEY
+                    );\
+                    CREATE TABLE bar (id INT PRIMARY KEY);",
+                sql_b: "CREATE TABLE foo(\
+                        id int PRIMARY KEY
+                    )",
+                expect: "DROP TABLE bar;",
+            }],
+            |ast_a, ast_b| ast_a.diff(&ast_b).unwrap(),
+        );
     }
 
     #[test]
     fn diff_add_column() {
-        let sql_a = "CREATE TABLE foo(\
-                id int PRIMARY KEY
-            )";
-        let sql_b = "CREATE TABLE foo(\
-                id int PRIMARY KEY,
-                bar text
-            )";
-        let sql_diff = "ALTER TABLE\n  foo\nADD\n  COLUMN bar TEXT;";
-
-        let ast_a = SyntaxTree::builder().sql(sql_a).build().unwrap();
-        let ast_b = SyntaxTree::builder().sql(sql_b).build().unwrap();
-        let ast_diff = ast_a.diff(&ast_b);
-
-        assert_eq!(ast_diff.unwrap().to_string(), sql_diff);
+        run_test_cases(
+            vec![TestCase {
+                dialect: Dialect::Generic,
+                sql_a: "CREATE TABLE foo(\
+                        id int PRIMARY KEY
+                    )",
+                sql_b: "CREATE TABLE foo(\
+                        id int PRIMARY KEY,
+                        bar text
+                    )",
+                expect: "ALTER TABLE\n  foo\nADD\n  COLUMN bar TEXT;",
+            }],
+            |ast_a, ast_b| ast_a.diff(&ast_b).unwrap(),
+        );
     }
 
     #[test]
     fn diff_drop_column() {
-        let sql_a = "CREATE TABLE foo(\
-                    id int PRIMARY KEY,
-                    bar text
-                )";
-        let sql_b = "CREATE TABLE foo(\
-                    id int PRIMARY KEY
-                )";
-        let sql_diff = "ALTER TABLE\n  foo DROP COLUMN bar;";
-
-        let ast_a = SyntaxTree::builder().sql(sql_a).build().unwrap();
-        let ast_b = SyntaxTree::builder().sql(sql_b).build().unwrap();
-        let ast_diff = ast_a.diff(&ast_b);
-
-        assert_eq!(ast_diff.unwrap().to_string(), sql_diff);
+        run_test_cases(
+            vec![TestCase {
+                dialect: Dialect::Generic,
+                sql_a: "CREATE TABLE foo(\
+                        id int PRIMARY KEY,
+                        bar text
+                    )",
+                sql_b: "CREATE TABLE foo(\
+                        id int PRIMARY KEY
+                    )",
+                expect: "ALTER TABLE\n  foo DROP COLUMN bar;",
+            }],
+            |ast_a, ast_b| ast_a.diff(&ast_b).unwrap(),
+        );
     }
 
     #[test]
     fn apply_create_table() {
-        let sql_a = "CREATE TABLE bar (id INT PRIMARY KEY);";
-        let sql_b = "CREATE TABLE foo (id INT PRIMARY KEY);";
-        let sql_res = sql_a.to_owned() + "\n\n" + sql_b;
-
-        let ast_a = SyntaxTree::builder().sql(sql_a).build().unwrap();
-        let ast_b = SyntaxTree::builder().sql(sql_b).build().unwrap();
-        let ast_res = ast_a.migrate(&ast_b);
-
-        assert_eq!(ast_res.unwrap().to_string(), sql_res);
+        run_test_cases(
+            vec![TestCase {
+            dialect: Dialect::Generic,
+            sql_a: "CREATE TABLE bar (id INT PRIMARY KEY);",
+            sql_b: "CREATE TABLE foo (id INT PRIMARY KEY);",
+            expect:
+                "CREATE TABLE bar (id INT PRIMARY KEY);\n\nCREATE TABLE foo (id INT PRIMARY KEY);",
+        }],
+            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+        );
     }
 
     #[test]
     fn apply_drop_table() {
-        let sql_a = "CREATE TABLE bar (id INT PRIMARY KEY)";
-        let sql_b = "DROP TABLE bar; CREATE TABLE foo (id INT PRIMARY KEY)";
-        let sql_res = "CREATE TABLE foo (id INT PRIMARY KEY);";
-
-        let ast_a = SyntaxTree::builder().sql(sql_a).build().unwrap();
-        let ast_b = SyntaxTree::builder().sql(sql_b).build().unwrap();
-        let ast_res = ast_a.migrate(&ast_b);
-
-        assert_eq!(ast_res.unwrap().to_string(), sql_res);
+        run_test_cases(
+            vec![TestCase {
+                dialect: Dialect::Generic,
+                sql_a: "CREATE TABLE bar (id INT PRIMARY KEY)",
+                sql_b: "DROP TABLE bar; CREATE TABLE foo (id INT PRIMARY KEY)",
+                expect: "CREATE TABLE foo (id INT PRIMARY KEY);",
+            }],
+            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+        );
     }
 
     #[test]
     fn apply_alter_table_add_column() {
-        let sql_a = "CREATE TABLE bar (id INT PRIMARY KEY)";
-        let sql_b = "ALTER TABLE bar ADD COLUMN bar TEXT";
-        let sql_res = "CREATE TABLE bar (id INT PRIMARY KEY, bar TEXT);";
-
-        let ast_a = SyntaxTree::builder().sql(sql_a).build().unwrap();
-        let ast_b = SyntaxTree::builder().sql(sql_b).build().unwrap();
-        let ast_res = ast_a.migrate(&ast_b);
-
-        assert_eq!(ast_res.unwrap().to_string(), sql_res);
+        run_test_cases(
+            vec![TestCase {
+                dialect: Dialect::Generic,
+                sql_a: "CREATE TABLE bar (id INT PRIMARY KEY)",
+                sql_b: "ALTER TABLE bar ADD COLUMN bar TEXT",
+                expect: "CREATE TABLE bar (id INT PRIMARY KEY, bar TEXT);",
+            }],
+            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+        );
     }
 
     #[test]
     fn apply_alter_table_drop_column() {
-        let sql_a = "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY)";
-        let sql_b = "ALTER TABLE bar DROP COLUMN bar";
-        let sql_res = "CREATE TABLE bar (id INT PRIMARY KEY);";
-
-        let ast_a = SyntaxTree::builder().sql(sql_a).build().unwrap();
-        let ast_b = SyntaxTree::builder().sql(sql_b).build().unwrap();
-        let ast_res = ast_a.migrate(&ast_b);
-
-        assert_eq!(ast_res.unwrap().to_string(), sql_res);
+        run_test_cases(
+            vec![TestCase {
+                dialect: Dialect::Generic,
+                sql_a: "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY)",
+                sql_b: "ALTER TABLE bar DROP COLUMN bar",
+                expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
+            }],
+            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+        );
     }
 
     #[test]
     fn apply_alter_table_alter_column() {
-        #[derive(Debug)]
-        struct TestCase {
-            dialect: Dialect,
-            sql_a: &'static str,
-            sql_b: &'static str,
-            expect: &'static str,
-        }
-        let test_cases = vec![
+        run_test_cases(vec![
             TestCase {
                 dialect: Dialect::Generic,
                 sql_a: "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY)",
@@ -292,22 +319,6 @@ mod tests {
                 sql_b: "ALTER TABLE bar ALTER COLUMN bar ADD GENERATED ALWAYS AS IDENTITY (START WITH 10)",
                 expect: "CREATE TABLE bar (\n  bar INTEGER GENERATED ALWAYS AS IDENTITY (START WITH 10),\n  id INT PRIMARY KEY\n);",
             },
-        ];
-
-        test_cases.into_iter().for_each(|tc| {
-            let ast_a = SyntaxTree::builder()
-                .dialect(tc.dialect.clone())
-                .sql(tc.sql_a)
-                .build()
-                .unwrap();
-            let ast_b = SyntaxTree::builder()
-                .dialect(tc.dialect.clone())
-                .sql(tc.sql_b)
-                .build()
-                .unwrap();
-            let ast_res = ast_a.migrate(&ast_b);
-
-            assert_eq!(ast_res.unwrap().to_string(), tc.expect, "{tc:?}");
-        });
+        ], |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap());
     }
 }
