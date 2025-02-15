@@ -18,22 +18,9 @@ impl Migrate for Vec<Statement> {
                     Statement::CreateTable(ca) => other
                         .iter()
                         .find(|sb| match sb {
-                            Statement::AlterTable {
-                                name,
-                                if_exists: _,
-                                only: _,
-                                operations: _,
-                                location: _,
-                                on_cluster: _,
-                            } => *name == ca.name,
+                            Statement::AlterTable { name, .. } => *name == ca.name,
                             Statement::Drop {
-                                object_type,
-                                names,
-                                if_exists: _,
-                                cascade: _,
-                                restrict: _,
-                                purge: _,
-                                temporary: _,
+                                object_type, names, ..
                             } => {
                                 *object_type == ObjectType::Table
                                     && names.len() == 1
@@ -61,12 +48,7 @@ impl Migrate for Statement {
         match self {
             Self::CreateTable(ca) => match other {
                 Self::AlterTable {
-                    name,
-                    operations,
-                    if_exists: _,
-                    only: _,
-                    location: _,
-                    on_cluster: _,
+                    name, operations, ..
                 } => {
                     if *name == ca.name {
                         Some(Self::CreateTable(migrate_alter_table(ca, operations)))
@@ -76,13 +58,7 @@ impl Migrate for Statement {
                     }
                 }
                 Self::Drop {
-                    object_type,
-                    names,
-                    if_exists: _,
-                    cascade: _,
-                    restrict: _,
-                    purge: _,
-                    temporary: _,
+                    object_type, names, ..
                 } => {
                     if *object_type == ObjectType::Table && names.contains(&ca.name) {
                         None
@@ -101,19 +77,10 @@ impl Migrate for Statement {
 fn migrate_alter_table(mut t: CreateTable, ops: &[AlterTableOperation]) -> CreateTable {
     for op in ops.iter() {
         match op {
-            AlterTableOperation::AddColumn {
-                column_def,
-                column_keyword: _,
-                if_not_exists: _,
-                column_position: _,
-            } => {
+            AlterTableOperation::AddColumn { column_def, .. } => {
                 t.columns.push(column_def.clone());
             }
-            AlterTableOperation::DropColumn {
-                column_name,
-                if_exists: _,
-                drop_behavior: _,
-            } => {
+            AlterTableOperation::DropColumn { column_name, .. } => {
                 t.columns.retain(|c| c.name != *column_name);
             }
             AlterTableOperation::AlterColumn { column_name, op } => {
@@ -154,18 +121,8 @@ fn migrate_alter_table(mut t: CreateTable, ops: &[AlterTableOperation]) -> Creat
                             generated_as,
                             sequence_options,
                         } => {
-                            c.options.retain(|o| {
-                                !matches!(
-                                    o.option,
-                                    ColumnOption::Generated {
-                                        generated_as: _,
-                                        sequence_options: _,
-                                        generation_expr: _,
-                                        generation_expr_mode: _,
-                                        generated_keyword: _
-                                    }
-                                )
-                            });
+                            c.options
+                                .retain(|o| !matches!(o.option, ColumnOption::Generated { .. }));
                             c.options.push(ColumnOptionDef {
                                 name: None,
                                 option: ColumnOption::Generated {

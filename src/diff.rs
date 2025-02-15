@@ -13,27 +13,7 @@ impl Diff for Vec<Statement> {
             .filter_map(|sa| match sa {
                 // CreateTable: compare against another CreateTable with the same name
                 // TODO: handle renames (e.g. use comments to tag a previous name for a table in a schema)
-                Statement::CreateTable(a) => other
-                    .iter()
-                    .find(|sb| match sb {
-                        Statement::CreateTable(b) => a.name == b.name,
-                        _ => false,
-                    })
-                    .map_or_else(
-                        || {
-                            // drop the table if it wasn't found in `other`
-                            Some(Statement::Drop {
-                                object_type: sqlparser::ast::ObjectType::Table,
-                                if_exists: a.if_not_exists,
-                                names: vec![a.name.clone()],
-                                cascade: false,
-                                restrict: false,
-                                purge: false,
-                                temporary: false,
-                            })
-                        },
-                        |sb| sa.diff(sb),
-                    ),
+                Statement::CreateTable(a) => find_and_compare_create_table(sa, a, other),
                 _ => todo!("diff all kinds of statments"),
             })
             // find resources that are in `other` but not in `self`
@@ -56,6 +36,34 @@ impl Diff for Vec<Statement> {
             Some(res)
         }
     }
+}
+
+fn find_and_compare_create_table(
+    sa: &Statement,
+    a: &CreateTable,
+    other: &[Statement],
+) -> Option<Statement> {
+    other
+        .iter()
+        .find(|sb| match sb {
+            Statement::CreateTable(b) => a.name == b.name,
+            _ => false,
+        })
+        .map_or_else(
+            || {
+                // drop the table if it wasn't found in `other`
+                Some(Statement::Drop {
+                    object_type: sqlparser::ast::ObjectType::Table,
+                    if_exists: a.if_not_exists,
+                    names: vec![a.name.clone()],
+                    cascade: false,
+                    restrict: false,
+                    purge: false,
+                    temporary: false,
+                })
+            },
+            |sb| sa.diff(sb),
+        )
 }
 
 impl Diff for Statement {
