@@ -71,6 +71,7 @@ impl Dialect {
 
 impl fmt::Display for Dialect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // NOTE: this must match how clap::ValueEnum displays variants
         write!(
             f,
             "{}",
