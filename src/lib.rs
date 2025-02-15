@@ -154,6 +154,11 @@ mod tests {
             .sql(tc.sql_b)
             .build()
             .unwrap();
+        SyntaxTree::builder()
+            .dialect(tc.dialect.clone())
+            .sql(tc.expect)
+            .build()
+            .expect(format!("invalid SQL: {:?}", tc.expect).as_str());
         let actual = testfn(ast_a, ast_b);
         assert_eq!(actual.to_string(), tc.expect, "{tc:?}");
     }
