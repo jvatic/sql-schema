@@ -3,17 +3,21 @@ name = "sql-schema"
 description = "Declarative SQL schema migrations"
 keywords = ["sql", "schema", "migration", "migrations"]
 categories = ["development-tools", "command-line-utilities", "database"]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["Jesse Stuart <rust@jesse.io>"]
 repository = "https://github.com/jvatic/sql-schema"
 include = ["src/**/*.rs", "Cargo.toml", "LICENSE.txt"]
 
+[features]
+default = ["clap"]
+clap = ["dep:clap"]
+
 [dependencies]
 anyhow = "1.0.95"
 bon = "3.3.2"
 camino = "1.1.9"
-clap = { version = "4.5.29", features = ["derive"] }
+clap = { version = "4.5.29", features = ["derive"], optional = true }
 sqlformat = "0.3.5"
 sqlparser = "0.54.0"

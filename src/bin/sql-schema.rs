@@ -1,5 +1,4 @@
 use std::{
-    fmt,
     fs::{self, File, OpenOptions},
     io::Write,
     time::{SystemTime, UNIX_EPOCH},
@@ -7,9 +6,8 @@ use std::{
 
 use anyhow::{anyhow, Context};
 use camino::{Utf8Path, Utf8PathBuf};
-use clap::{Parser, Subcommand, ValueEnum};
-use sql_schema::SyntaxTree;
-use sqlparser::dialect::{Dialect, GenericDialect, PostgreSqlDialect};
+use clap::{Parser, Subcommand};
+use sql_schema::{Dialect, SyntaxTree};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -38,8 +36,8 @@ struct SchemaCommand {
     #[arg(short, long, default_value_t = Utf8PathBuf::from(DEFAULT_MIGRATIONS_DIR))]
     migrations_dir: Utf8PathBuf,
     /// dialect of SQL to use
-    #[arg(short, long, default_value_t = SqlDialect::Generic)]
-    dialect: SqlDialect,
+    #[arg(short, long, default_value_t = Dialect::Generic)]
+    dialect: Dialect,
 }
 
 #[derive(Parser, Debug)]
@@ -51,8 +49,8 @@ struct MigrationCommand {
     #[arg(short, long, default_value_t = Utf8PathBuf::from(DEFAULT_MIGRATIONS_DIR))]
     migrations_dir: Utf8PathBuf,
     /// dialect of SQL to use
-    #[arg(short, long, default_value_t = SqlDialect::Generic)]
-    dialect: SqlDialect,
+    #[arg(short, long, default_value_t = Dialect::Generic)]
+    dialect: Dialect,
     /// name of migration
     #[arg(short, long, default_value = "generated_migration")]
     name: String,
@@ -61,27 +59,6 @@ struct MigrationCommand {
     /// default is to match the pattern in the migrations dir
     #[arg(long)]
     include_down: Option<bool>,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-enum SqlDialect {
-    Generic,
-    Postgresql,
-}
-
-impl fmt::Display for SqlDialect {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", format!("{self:?}").to_ascii_lowercase())
-    }
-}
-
-impl From<SqlDialect> for Box<dyn Dialect> {
-    fn from(value: SqlDialect) -> Self {
-        match value {
-            SqlDialect::Generic => Box::new(GenericDialect {}),
-            SqlDialect::Postgresql => Box::new(PostgreSqlDialect {}),
-        }
-    }
 }
 
 #[derive(Debug, Default)]
@@ -116,9 +93,8 @@ fn run_schema(command: SchemaCommand) -> anyhow::Result<()> {
     ensure_schema_file(&command.schema_path)?;
     ensure_migration_dir(&command.migrations_dir)?;
 
-    let dialect: Box<dyn Dialect> = command.dialect.into();
-    let (migrations, _) = parse_migrations(dialect.as_ref(), &command.migrations_dir)?;
-    let schema = parse_sql_file(dialect.as_ref(), &command.schema_path)?;
+    let (migrations, _) = parse_migrations(command.dialect, &command.migrations_dir)?;
+    let schema = parse_sql_file(command.dialect, &command.schema_path)?;
     let diff = schema.diff(&migrations).unwrap_or_else(SyntaxTree::empty);
     let schema = schema.migrate(&diff).unwrap_or_else(SyntaxTree::empty);
     eprintln!("writing {}", command.schema_path);
@@ -136,10 +112,9 @@ fn run_migration(command: MigrationCommand) -> anyhow::Result<()> {
     ensure_schema_file(&command.schema_path)?;
     ensure_migration_dir(&command.migrations_dir)?;
 
-    let dialect: Box<dyn Dialect> = command.dialect.into();
-    let (migrations, opts) = parse_migrations(dialect.as_ref(), &command.migrations_dir)?;
+    let (migrations, opts) = parse_migrations(command.dialect, &command.migrations_dir)?;
     let opts = opts.reconcile(&command);
-    let schema = parse_sql_file(dialect.as_ref(), &command.schema_path)?;
+    let schema = parse_sql_file(command.dialect, &command.schema_path)?;
     match migrations.diff(&schema) {
         Some(up_migration) => {
             let timestamp = SystemTime::now()
@@ -222,7 +197,7 @@ fn ensure_migration_dir(dir: &Utf8Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn parse_sql_file(dialect: &dyn Dialect, path: &Utf8Path) -> anyhow::Result<SyntaxTree> {
+fn parse_sql_file(dialect: Dialect, path: &Utf8Path) -> anyhow::Result<SyntaxTree> {
     let data = fs::read_to_string(path)?;
     Ok(SyntaxTree::builder()
         .dialect(dialect)
@@ -232,7 +207,7 @@ fn parse_sql_file(dialect: &dyn Dialect, path: &Utf8Path) -> anyhow::Result<Synt
 
 /// builds a [SyntaxTree] by applying each migration in order
 fn parse_migrations(
-    dialect: &dyn Dialect,
+    dialect: Dialect,
     dir: &Utf8Path,
 ) -> anyhow::Result<(SyntaxTree, MigrationOptions)> {
     let mut opts = MigrationOptions::default();

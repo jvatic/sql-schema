@@ -5,12 +5,65 @@ use diff::Diff;
 use migration::Migrate;
 use sqlparser::{
     ast::Statement,
-    dialect::{Dialect, GenericDialect},
+    dialect::{self},
     parser::{Parser, ParserError},
 };
 
 mod diff;
 mod migration;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum), clap(rename_all = "lower"))]
+#[non_exhaustive]
+pub enum Dialect {
+    Ansi,
+    BigQuery,
+    ClickHouse,
+    Databricks,
+    DuckDb,
+    #[default]
+    Generic,
+    Hive,
+    MsSql,
+    MySql,
+    PostgreSql,
+    RedshiftSql,
+    Snowflake,
+    SQLite,
+}
+
+impl Dialect {
+    fn to_sqlparser_dialect(self) -> Box<dyn dialect::Dialect> {
+        match self {
+            Self::Ansi => Box::new(dialect::AnsiDialect {}),
+            Self::BigQuery => Box::new(dialect::BigQueryDialect {}),
+            Self::ClickHouse => Box::new(dialect::ClickHouseDialect {}),
+            Self::Databricks => Box::new(dialect::DatabricksDialect {}),
+            Self::DuckDb => Box::new(dialect::DuckDbDialect {}),
+            Self::Generic => Box::new(dialect::GenericDialect {}),
+            Self::Hive => Box::new(dialect::HiveDialect {}),
+            Self::MsSql => Box::new(dialect::MsSqlDialect {}),
+            Self::MySql => Box::new(dialect::MySqlDialect {}),
+            Self::PostgreSql => Box::new(dialect::PostgreSqlDialect {}),
+            Self::RedshiftSql => Box::new(dialect::RedshiftSqlDialect {}),
+            Self::Snowflake => Box::new(dialect::SnowflakeDialect {}),
+            Self::SQLite => Box::new(dialect::SQLiteDialect {}),
+        }
+    }
+}
+
+impl fmt::Display for Dialect {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            format!("{self:?}")
+                .to_ascii_lowercase()
+                .split('-')
+                .collect::<String>()
+        )
+    }
+}
 
 #[derive(Debug)]
 pub struct SyntaxTree(Vec<Statement>);
@@ -18,13 +71,9 @@ pub struct SyntaxTree(Vec<Statement>);
 #[bon]
 impl SyntaxTree {
     #[builder]
-    pub fn new<'a>(
-        dialect: Option<&dyn Dialect>,
-        sql: impl Into<&'a str>,
-    ) -> Result<Self, ParserError> {
-        let generic = GenericDialect {};
-        let dialect = dialect.unwrap_or(&generic);
-        let ast = Parser::parse_sql(dialect, sql.into())?;
+    pub fn new<'a>(dialect: Option<Dialect>, sql: impl Into<&'a str>) -> Result<Self, ParserError> {
+        let dialect = dialect.unwrap_or_default().to_sqlparser_dialect();
+        let ast = Parser::parse_sql(dialect.as_ref(), sql.into())?;
         Ok(Self(ast))
     }
 
@@ -63,8 +112,6 @@ impl fmt::Display for SyntaxTree {
 
 #[cfg(test)]
 mod tests {
-    use sqlparser::dialect::PostgreSqlDialect;
-
     use super::*;
 
     #[test]
@@ -197,50 +244,50 @@ mod tests {
     fn apply_alter_table_alter_column() {
         #[derive(Debug)]
         struct TestCase {
-            dialect: Box<dyn Dialect>,
+            dialect: Dialect,
             sql_a: &'static str,
             sql_b: &'static str,
             expect: &'static str,
         }
         let test_cases = vec![
             TestCase {
-                dialect: Box::new(GenericDialect {}),
+                dialect: Dialect::Generic,
                 sql_a: "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY)",
                 sql_b: "ALTER TABLE bar ALTER COLUMN bar SET NOT NULL",
                 expect: "CREATE TABLE bar (bar TEXT NOT NULL, id INT PRIMARY KEY);",
             },
             TestCase {
-                dialect: Box::new(GenericDialect {}),
+                dialect: Dialect::Generic,
                 sql_a: "CREATE TABLE bar (bar TEXT NOT NULL, id INT PRIMARY KEY)",
                 sql_b: "ALTER TABLE bar ALTER COLUMN bar DROP NOT NULL",
                 expect: "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY);",
             },
             TestCase {
-                dialect: Box::new(GenericDialect {}),
+                dialect: Dialect::Generic,
                 sql_a: "CREATE TABLE bar (bar TEXT NOT NULL DEFAULT 'foo', id INT PRIMARY KEY)",
                 sql_b: "ALTER TABLE bar ALTER COLUMN bar DROP DEFAULT",
                 expect: "CREATE TABLE bar (bar TEXT NOT NULL, id INT PRIMARY KEY);",
             },
             TestCase {
-                dialect: Box::new(GenericDialect {}),
+                dialect: Dialect::Generic,
                 sql_a: "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY)",
                 sql_b: "ALTER TABLE bar ALTER COLUMN bar SET DATA TYPE INTEGER",
                 expect: "CREATE TABLE bar (bar INTEGER, id INT PRIMARY KEY);",
             },
             TestCase {
-                dialect: Box::new(PostgreSqlDialect {}),
+                dialect: Dialect::PostgreSql,
                 sql_a: "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY)",
                 sql_b: "ALTER TABLE bar ALTER COLUMN bar SET DATA TYPE timestamp with time zone\n USING timestamp with time zone 'epoch' + foo_timestamp * interval '1 second'",
                 expect: "CREATE TABLE bar (bar TIMESTAMP WITH TIME ZONE, id INT PRIMARY KEY);",
             },
             TestCase {
-                dialect: Box::new(GenericDialect {}),
+                dialect: Dialect::Generic,
                 sql_a: "CREATE TABLE bar (bar INTEGER, id INT PRIMARY KEY)",
                 sql_b: "ALTER TABLE bar ALTER COLUMN bar ADD GENERATED BY DEFAULT AS IDENTITY",
                 expect: "CREATE TABLE bar (\n  bar INTEGER GENERATED BY DEFAULT AS IDENTITY,\n  id INT PRIMARY KEY\n);",
             },
             TestCase {
-                dialect: Box::new(GenericDialect {}),
+                dialect: Dialect::Generic,
                 sql_a: "CREATE TABLE bar (bar INTEGER, id INT PRIMARY KEY)",
                 sql_b: "ALTER TABLE bar ALTER COLUMN bar ADD GENERATED ALWAYS AS IDENTITY (START WITH 10)",
                 expect: "CREATE TABLE bar (\n  bar INTEGER GENERATED ALWAYS AS IDENTITY (START WITH 10),\n  id INT PRIMARY KEY\n);",
@@ -249,12 +296,12 @@ mod tests {
 
         test_cases.into_iter().for_each(|tc| {
             let ast_a = SyntaxTree::builder()
-                .dialect(tc.dialect.as_ref())
+                .dialect(tc.dialect.clone())
                 .sql(tc.sql_a)
                 .build()
                 .unwrap();
             let ast_b = SyntaxTree::builder()
-                .dialect(tc.dialect.as_ref())
+                .dialect(tc.dialect.clone())
                 .sql(tc.sql_b)
                 .build()
                 .unwrap();
