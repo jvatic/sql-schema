@@ -6,11 +6,28 @@ use migration::Migrate;
 use sqlparser::{
     ast::Statement,
     dialect::{self},
-    parser::{Parser, ParserError},
+    parser::{self, Parser},
 };
 
 mod diff;
 mod migration;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseError(parser::ParserError);
+
+impl From<parser::ParserError> for ParseError {
+    fn from(value: parser::ParserError) -> Self {
+        Self(value)
+    }
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::error::Error for ParseError {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum), clap(rename_all = "lower"))]
@@ -71,7 +88,7 @@ pub struct SyntaxTree(Vec<Statement>);
 #[bon]
 impl SyntaxTree {
     #[builder]
-    pub fn new<'a>(dialect: Option<Dialect>, sql: impl Into<&'a str>) -> Result<Self, ParserError> {
+    pub fn new<'a>(dialect: Option<Dialect>, sql: impl Into<&'a str>) -> Result<Self, ParseError> {
         let dialect = dialect.unwrap_or_default().to_sqlparser_dialect();
         let ast = Parser::parse_sql(dialect.as_ref(), sql.into())?;
         Ok(Self(ast))
