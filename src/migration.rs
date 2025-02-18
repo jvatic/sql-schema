@@ -9,7 +9,7 @@ pub trait Migrate: Sized {
 
 impl Migrate for Vec<Statement> {
     fn migrate(self, other: &Self) -> Option<Self> {
-        let mut next: Self = self
+        let next: Self = self
             .into_iter()
             // perform any transformations on existing schema (e.g. ALTER/DROP table)
             .filter_map(|sa| {
@@ -38,7 +38,6 @@ impl Migrate for Vec<Statement> {
                 _ => None,
             }))
             .collect();
-        next.sort(); // TODO: does this do what we want?
         Some(next)
     }
 }
