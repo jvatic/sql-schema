@@ -20,4 +20,4 @@ bon = "3.3.2"
 camino = "1.1.9"
 clap = { version = "4.5.29", features = ["derive"], optional = true }
 sqlformat = "0.3.5"
-sqlparser = "0.54.0"
+sqlparser = { version = "0.54.0", git = "https://github.com/apache/datafusion-sqlparser-rs.git", rev = "c75a99262102da1ac795c4272a640d7e36b0e157" }

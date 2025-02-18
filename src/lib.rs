@@ -245,6 +245,57 @@ mod tests {
     }
 
     #[test]
+    fn diff_create_type() {
+        run_test_cases(
+            vec![
+                TestCase {
+                    dialect: Dialect::Generic,
+                    sql_a: "CREATE TYPE bug_status AS ENUM ('new', 'open');",
+                    sql_b: "CREATE TYPE foo AS ENUM ('bar');",
+                    expect: "DROP TYPE bug_status;\n\nCREATE TYPE foo AS ENUM ('bar');",
+                },
+                TestCase {
+                    dialect: Dialect::Generic,
+                    sql_a: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'closed');",
+                    sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'assigned', 'closed');",
+                    expect: "ALTER TYPE bug_status\nADD\n  VALUE 'assigned'\nAFTER\n  'open';",
+                },
+                TestCase {
+                    dialect: Dialect::Generic,
+                    sql_a: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
+                    sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'closed');",
+                    expect: "ALTER TYPE bug_status\nADD\n  VALUE 'new' BEFORE 'open';",
+                },
+                TestCase {
+                    dialect: Dialect::Generic,
+                    sql_a: "CREATE TYPE bug_status AS ENUM ('new', 'open');",
+                    sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'closed');",
+                    expect: "ALTER TYPE bug_status\nADD\n  VALUE 'closed';",
+                },
+                TestCase {
+                    dialect: Dialect::Generic,
+                    sql_a: "CREATE TYPE bug_status AS ENUM ('new', 'open');",
+                    sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'assigned', 'closed');",
+                    expect: "ALTER TYPE bug_status\nADD\n  VALUE 'assigned';\n\nALTER TYPE bug_status\nADD\n  VALUE 'closed';",
+                },
+                TestCase {
+                    dialect: Dialect::Generic,
+                    sql_a: "CREATE TYPE bug_status AS ENUM ('open', 'critical');",
+                    sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'assigned', 'closed', 'critical');",
+                    expect: "ALTER TYPE bug_status\nADD\n  VALUE 'new' BEFORE 'open';\n\nALTER TYPE bug_status\nADD\n  VALUE 'assigned'\nAFTER\n  'open';\n\nALTER TYPE bug_status\nADD\n  VALUE 'closed'\nAFTER\n  'assigned';",
+                },
+                TestCase {
+                    dialect: Dialect::Generic,
+                    sql_a: "CREATE TYPE bug_status AS ENUM ('open');",
+                    sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'closed');",
+                    expect: "ALTER TYPE bug_status\nADD\n  VALUE 'new' BEFORE 'open';\n\nALTER TYPE bug_status\nADD\n  VALUE 'closed';",
+                },
+            ],
+            |ast_a, ast_b| ast_a.diff(&ast_b).unwrap(),
+        );
+    }
+
+    #[test]
     fn apply_create_table() {
         run_test_cases(
             vec![TestCase {
@@ -343,5 +394,71 @@ mod tests {
                 expect: "CREATE TABLE bar (\n  bar INTEGER GENERATED ALWAYS AS IDENTITY (START WITH 10),\n  id INT PRIMARY KEY\n);",
             },
         ], |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap());
+    }
+
+    #[test]
+    fn apply_alter_create_type() {
+        run_test_cases(
+            vec![TestCase {
+                dialect: Dialect::Generic,
+                sql_a: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
+                sql_b: "CREATE TYPE compfoo AS (f1 int, f2 text);",
+                expect: "CREATE TYPE bug_status AS ENUM ('open', 'closed');\n\nCREATE TYPE compfoo AS (f1 INT, f2 TEXT);",
+            }],
+            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+        );
+    }
+
+    #[test]
+    fn apply_alter_type_rename() {
+        run_test_cases(
+            vec![TestCase {
+                dialect: Dialect::Generic,
+                sql_a: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
+                sql_b: "ALTER TYPE bug_status RENAME TO issue_status",
+                expect: "CREATE TYPE issue_status AS ENUM ('open', 'closed');",
+            }],
+            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+        );
+    }
+
+    #[test]
+    fn apply_alter_type_add_value() {
+        run_test_cases(
+            vec![
+                TestCase {
+                    dialect: Dialect::Generic,
+                    sql_a: "CREATE TYPE bug_status AS ENUM ('open');",
+                    sql_b: "ALTER TYPE bug_status ADD VALUE 'new' BEFORE 'open';",
+                    expect: "CREATE TYPE bug_status AS ENUM ('new', 'open');",
+                },
+                TestCase {
+                    dialect: Dialect::Generic,
+                    sql_a: "CREATE TYPE bug_status AS ENUM ('open');",
+                    sql_b: "ALTER TYPE bug_status ADD VALUE 'closed' AFTER 'open';",
+                    expect: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
+                },
+                TestCase {
+                    dialect: Dialect::Generic,
+                    sql_a: "CREATE TYPE bug_status AS ENUM ('open');",
+                    sql_b: "ALTER TYPE bug_status ADD VALUE 'closed';",
+                    expect: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
+                },
+            ],
+            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+        );
+    }
+
+    #[test]
+    fn apply_alter_type_rename_value() {
+        run_test_cases(
+            vec![TestCase {
+                dialect: Dialect::Generic,
+                sql_a: "CREATE TYPE bug_status AS ENUM ('new', 'closed');",
+                sql_b: "ALTER TYPE bug_status RENAME VALUE 'new' TO 'open';",
+                expect: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
+            }],
+            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+        );
     }
 }
