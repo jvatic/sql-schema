@@ -6,11 +6,11 @@ sql-schema
 [![Crates.io Version](https://img.shields.io/crates/v/sql-schema)](https://crates.io/crates/sql-schema)
 [![docs.rs](https://img.shields.io/docsrs/sql-schema)](https://docs.rs/sql-schema)
 
-This crate provides tools for generating schema migrations based on edits to a canonical schema file.
+This crate provides a command line tool for generating schema migrations based on edits to a canonical schema file.
 
 ## Status
 
-This crate is in a very early stage of development and is missing many features.
+This crate is in an early stage of development and may not work with your schema or have unexpected behaviour—always double check the output.
 
 ## Usage
 
@@ -32,6 +32,13 @@ sql-schema migration --name my_new_migration \
 # -> writing schema/migrations/1739486729_my_new_migration.up.sql
 # -> writing schema/migrations/1739486729_my_new_migration.down.sql
 ```
+
+## Goals
+
+- Time saver: You can generate an up _and_ down migration for the cost of editing a schema.
+- Non restrictive: You can edit the generated migrations as needed (e.g. if you need to migrate data along side a schema change).
+- Minimal buy-in: You don't have to change anything about your project to start or stop using it (committing the generated schema is optional).
+- Works with any SQL dialect.
 
 ## Licensing
 
