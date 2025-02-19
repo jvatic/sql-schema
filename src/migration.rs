@@ -30,6 +30,19 @@ impl Migrate for Vec<Statement> {
                             _ => false,
                         })
                         .map_or(Some(orig), |sb| sa.migrate(sb)),
+                    Statement::CreateIndex(a) => other
+                        .iter()
+                        .find(|sb| match sb {
+                            Statement::Drop {
+                                object_type, names, ..
+                            } => {
+                                *object_type == ObjectType::Index
+                                    && names.len() == 1
+                                    && Some(&names[0]) == a.name.as_ref()
+                            }
+                            _ => false,
+                        })
+                        .map_or(Some(orig), |sb| sa.migrate(sb)),
                     Statement::CreateType { name, .. } => other
                         .iter()
                         .find(|sb| match sb {
@@ -56,9 +69,10 @@ impl Migrate for Vec<Statement> {
             })
             // CREATE table etc.
             .chain(other.iter().filter_map(|sb| match sb {
-                Statement::CreateTable(_) => Some(sb.clone()),
-                Statement::CreateType { .. } => Some(sb.clone()),
-                Statement::CreateExtension { .. } => Some(sb.clone()),
+                Statement::CreateTable(_)
+                | Statement::CreateIndex { .. }
+                | Statement::CreateType { .. }
+                | Statement::CreateExtension { .. } => Some(sb.clone()),
                 _ => None,
             }))
             .collect();
@@ -88,6 +102,20 @@ impl Migrate for Statement {
                     } else {
                         // DROP statement is for another table
                         Some(Self::CreateTable(ca))
+                    }
+                }
+                _ => todo!("handle migrating statement: {:?}", other),
+            },
+            Self::CreateIndex(a) => match other {
+                Self::Drop {
+                    object_type, names, ..
+                } => {
+                    let name = a.name.clone().expect("can't migrate unnamed index: {a}");
+                    if *object_type == ObjectType::Index && names.contains(&name) {
+                        None
+                    } else {
+                        // DROP statement is for another index
+                        Some(Self::CreateIndex(a))
                     }
                 }
                 _ => todo!("handle migrating statement: {:?}", other),
@@ -127,7 +155,7 @@ impl Migrate for Statement {
                 }
                 _ => todo!("handle migrating statement: {:?}", other),
             },
-            _ => todo!("handle migrating statement: {:?}", other),
+            _ => todo!("handle migrating statement: {self:?} -> {other:?}"),
         }
     }
 }

@@ -2,7 +2,8 @@ use std::{cmp::Ordering, collections::HashSet};
 
 use sqlparser::ast::{
     AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
-    AlterTypeOperation, CreateTable, Ident, ObjectName, Statement, UserDefinedTypeRepresentation,
+    AlterTypeOperation, CreateIndex, CreateTable, Ident, ObjectName, ObjectType, Statement,
+    UserDefinedTypeRepresentation,
 };
 
 pub trait Diff: Sized {
@@ -21,6 +22,7 @@ impl Diff for Vec<Statement> {
                 // CreateTable: compare against another CreateTable with the same name
                 // TODO: handle renames (e.g. use comments to tag a previous name for a table in a schema)
                 Statement::CreateTable(a) => find_and_compare_create_table(sa, a, other),
+                Statement::CreateIndex(a) => find_and_compare_create_index(sa, a, other),
                 Statement::CreateType { name, .. } => find_and_compare_create_type(sa, name, other),
                 Statement::CreateExtension {
                     name,
@@ -35,6 +37,10 @@ impl Diff for Vec<Statement> {
                 match sb {
                     Statement::CreateTable(b) => self.iter().find(|sa| match sa {
                         Statement::CreateTable(a) => a.name == b.name,
+                        _ => false,
+                    }),
+                    Statement::CreateIndex(b) => self.iter().find(|sa| match sa {
+                        Statement::CreateIndex(a) => a.name == b.name,
                         _ => false,
                     }),
                     Statement::CreateType { name: b_name, .. } => self.iter().find(|sa| match sa {
@@ -107,6 +113,36 @@ fn find_and_compare_create_table(
     )
 }
 
+fn find_and_compare_create_index(
+    sa: &Statement,
+    a: &CreateIndex,
+    other: &[Statement],
+) -> Option<Vec<Statement>> {
+    find_and_compare(
+        sa,
+        other,
+        |sb| match sb {
+            Statement::CreateIndex(b) => a.name == b.name,
+            _ => false,
+        },
+        || {
+            let name = a
+                .name
+                .clone()
+                .expect("can't drop an unnamed index, please ensure all indexes are named");
+            Some(vec![Statement::Drop {
+                object_type: sqlparser::ast::ObjectType::Index,
+                if_exists: a.if_not_exists,
+                names: vec![name],
+                cascade: false,
+                restrict: false,
+                purge: false,
+                temporary: false,
+            }])
+        },
+    )
+}
+
 fn find_and_compare_create_type(
     sa: &Statement,
     a_name: &ObjectName,
@@ -170,6 +206,10 @@ impl Diff for Statement {
                 Self::CreateTable(b) => compare_create_table(a, b),
                 _ => None,
             },
+            Self::CreateIndex(a) => match other {
+                Self::CreateIndex(b) => compare_create_index(a, b),
+                _ => None,
+            },
             Self::CreateType {
                 name: a_name,
                 representation: a_rep,
@@ -231,6 +271,30 @@ fn compare_create_table(a: &CreateTable, b: &CreateTable) -> Option<Vec<Statemen
         location: None,
         on_cluster: a.on_cluster.clone(),
     }])
+}
+
+fn compare_create_index(a: &CreateIndex, b: &CreateIndex) -> Option<Vec<Statement>> {
+    if a == b {
+        return None;
+    }
+
+    if a.name.is_none() || b.name.is_none() {
+        panic!("can't diff unnamed indexes!");
+    }
+    let name = a.name.clone().unwrap();
+
+    Some(vec![
+        Statement::Drop {
+            object_type: ObjectType::Index,
+            if_exists: a.if_not_exists,
+            names: vec![name],
+            cascade: false,
+            restrict: false,
+            purge: false,
+            temporary: false,
+        },
+        Statement::CreateIndex(b.clone()),
+    ])
 }
 
 fn compare_create_type(

@@ -245,6 +245,27 @@ mod tests {
     }
 
     #[test]
+    fn diff_create_index() {
+        run_test_cases(
+            vec![
+                TestCase {
+                    dialect: Dialect::Generic,
+                    sql_a: "CREATE UNIQUE INDEX title_idx ON films (title);",
+                    sql_b: "CREATE UNIQUE INDEX title_idx ON films ((lower(title)));",
+                    expect: "DROP INDEX title_idx;\n\nCREATE UNIQUE INDEX title_idx ON films((lower(title)));",
+                },
+                TestCase {
+                    dialect: Dialect::Generic,
+                    sql_a: "CREATE UNIQUE INDEX IF NOT EXISTS title_idx ON films (title);",
+                    sql_b: "CREATE UNIQUE INDEX IF NOT EXISTS title_idx ON films ((lower(title)));",
+                    expect: "DROP INDEX IF EXISTS title_idx;\n\nCREATE UNIQUE INDEX IF NOT EXISTS title_idx ON films((lower(title)));",
+                },
+            ],
+            |ast_a, ast_b| ast_a.diff(&ast_b).unwrap(),
+        );
+    }
+
+    #[test]
     fn diff_create_type() {
         run_test_cases(
             vec![
@@ -407,6 +428,31 @@ mod tests {
                 expect: "CREATE TABLE bar (\n  bar INTEGER GENERATED ALWAYS AS IDENTITY (START WITH 10),\n  id INT PRIMARY KEY\n);",
             },
         ], |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap());
+    }
+
+    #[test]
+    fn apply_create_index() {
+        run_test_cases(vec![
+            TestCase {
+                dialect: Dialect::Generic,
+                sql_a: "CREATE UNIQUE INDEX title_idx ON films (title);",
+                sql_b: "CREATE INDEX code_idx ON films (code);",
+                expect: "CREATE UNIQUE INDEX title_idx ON films(title);\n\nCREATE INDEX code_idx ON films(code);",
+            },
+            TestCase {
+                dialect: Dialect::Generic,
+                sql_a: "CREATE UNIQUE INDEX title_idx ON films (title);",
+                sql_b: "DROP INDEX title_idx;",
+                expect: "",
+            },
+            TestCase {
+                dialect: Dialect::Generic,
+                sql_a: "CREATE UNIQUE INDEX title_idx ON films (title);",
+                sql_b: "DROP INDEX title_idx;CREATE INDEX code_idx ON films (code);",
+                expect: "CREATE INDEX code_idx ON films(code);",
+            },
+        ],
+        |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap());
     }
 
     #[test]
