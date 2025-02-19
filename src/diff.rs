@@ -6,11 +6,15 @@ use sqlparser::ast::{
 };
 
 pub trait Diff: Sized {
-    fn diff(&self, other: &Self) -> Option<Vec<Statement>>;
+    type Diff;
+
+    fn diff(&self, other: &Self) -> Self::Diff;
 }
 
 impl Diff for Vec<Statement> {
-    fn diff(&self, other: &Self) -> Option<Vec<Statement>> {
+    type Diff = Option<Vec<Statement>>;
+
+    fn diff(&self, other: &Self) -> Self::Diff {
         let res = self
             .iter()
             .filter_map(|sa| match sa {
@@ -158,7 +162,9 @@ fn find_and_compare_create_extension(
 }
 
 impl Diff for Statement {
-    fn diff(&self, other: &Self) -> Option<Vec<Statement>> {
+    type Diff = Option<Vec<Statement>>;
+
+    fn diff(&self, other: &Self) -> Self::Diff {
         match self {
             Self::CreateTable(a) => match other {
                 Self::CreateTable(b) => compare_create_table(a, b),
