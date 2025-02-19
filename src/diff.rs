@@ -2,7 +2,7 @@ use std::{cmp::Ordering, collections::HashSet};
 
 use sqlparser::ast::{
     AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
-    AlterTypeOperation, CreateTable, ObjectName, Statement, UserDefinedTypeRepresentation,
+    AlterTypeOperation, CreateTable, Ident, ObjectName, Statement, UserDefinedTypeRepresentation,
 };
 
 pub trait Diff: Sized {
@@ -18,6 +18,12 @@ impl Diff for Vec<Statement> {
                 // TODO: handle renames (e.g. use comments to tag a previous name for a table in a schema)
                 Statement::CreateTable(a) => find_and_compare_create_table(sa, a, other),
                 Statement::CreateType { name, .. } => find_and_compare_create_type(sa, name, other),
+                Statement::CreateExtension {
+                    name,
+                    if_not_exists,
+                    cascade,
+                    ..
+                } => find_and_compare_create_extension(sa, name, *if_not_exists, *cascade, other),
                 _ => todo!("diff all kinds of statments"),
             })
             // find resources that are in `other` but not in `self`
@@ -31,6 +37,12 @@ impl Diff for Vec<Statement> {
                         Statement::CreateType { name: a_name, .. } => a_name == b_name,
                         _ => false,
                     }),
+                    Statement::CreateExtension { name: b_name, .. } => {
+                        self.iter().find(|sa| match sa {
+                            Statement::CreateExtension { name: a_name, .. } => a_name == b_name,
+                            _ => false,
+                        })
+                    }
                     _ => todo!("diff all kinds of statements (other)"),
                 }
                 // return the statement if it's not in `self`
@@ -112,6 +124,34 @@ fn find_and_compare_create_type(
                 restrict: false,
                 purge: false,
                 temporary: false,
+            }])
+        },
+    )
+}
+
+fn find_and_compare_create_extension(
+    sa: &Statement,
+    a_name: &Ident,
+    if_not_exists: bool,
+    cascade: bool,
+    other: &[Statement],
+) -> Option<Vec<Statement>> {
+    find_and_compare(
+        sa,
+        other,
+        |sb| match sb {
+            Statement::CreateExtension { name: b_name, .. } => a_name == b_name,
+            _ => false,
+        },
+        || {
+            Some(vec![Statement::DropExtension {
+                names: vec![a_name.clone()],
+                if_exists: if_not_exists,
+                cascade_or_restrict: if cascade {
+                    Some(sqlparser::ast::ReferentialAction::Cascade)
+                } else {
+                    None
+                },
             }])
         },
     )

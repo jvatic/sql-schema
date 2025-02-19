@@ -44,6 +44,13 @@ impl Migrate for Vec<Statement> {
                             _ => false,
                         })
                         .map_or(Some(orig), |sb| sa.migrate(sb)),
+                    Statement::CreateExtension { name, .. } => other
+                        .iter()
+                        .find(|sb| match sb {
+                            Statement::DropExtension { names, .. } => names.contains(name),
+                            _ => false,
+                        })
+                        .map_or(Some(orig), |sb| sa.migrate(sb)),
                     _ => todo!("handle migrating statement: {:?}", other),
                 }
             })
@@ -51,6 +58,7 @@ impl Migrate for Vec<Statement> {
             .chain(other.iter().filter_map(|sb| match sb {
                 Statement::CreateTable(_) => Some(sb.clone()),
                 Statement::CreateType { .. } => Some(sb.clone()),
+                Statement::CreateExtension { .. } => Some(sb.clone()),
                 _ => None,
             }))
             .collect();

@@ -296,6 +296,19 @@ mod tests {
     }
 
     #[test]
+    fn diff_create_extension() {
+        run_test_cases(
+            vec![TestCase {
+                dialect: Dialect::Generic,
+                sql_a: "CREATE EXTENSION hstore;",
+                sql_b: "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
+                expect: "DROP EXTENSION hstore;\n\nCREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
+            }],
+            |ast_a, ast_b| ast_a.diff(&ast_b).unwrap(),
+        );
+    }
+
+    #[test]
     fn apply_create_table() {
         run_test_cases(
             vec![TestCase {
@@ -457,6 +470,19 @@ mod tests {
                 sql_a: "CREATE TYPE bug_status AS ENUM ('new', 'closed');",
                 sql_b: "ALTER TYPE bug_status RENAME VALUE 'new' TO 'open';",
                 expect: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
+            }],
+            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+        );
+    }
+
+    #[test]
+    fn apply_create_extension() {
+        run_test_cases(
+            vec![TestCase {
+                dialect: Dialect::Generic,
+                sql_a: "CREATE EXTENSION hstore;",
+                sql_b: "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
+                expect: "CREATE EXTENSION hstore;\n\nCREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
             }],
             |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
         );
