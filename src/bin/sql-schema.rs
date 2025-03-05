@@ -1,13 +1,17 @@
 use std::{
     fs::{self, File, OpenOptions},
-    io::Write,
-    time::{SystemTime, UNIX_EPOCH},
+    io::{self, Write},
+    time::SystemTime,
 };
 
 use anyhow::{anyhow, Context};
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::{Utf8DirEntry, Utf8Path, Utf8PathBuf};
+use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
-use sql_schema::{Dialect, SyntaxTree};
+use sql_schema::{
+    path_template::{PathTemplate, TemplateData, UpDown},
+    Dialect, SyntaxTree,
+};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -63,6 +67,7 @@ struct MigrationCommand {
 
 #[derive(Debug, Default)]
 struct MigrationOptions {
+    path_template: PathTemplate,
     include_down: bool,
 }
 
@@ -73,7 +78,11 @@ impl MigrationOptions {
         } else {
             self.include_down
         };
-        Self { include_down }
+        let path_template = self.path_template;
+        Self {
+            include_down,
+            path_template,
+        }
     }
 }
 
@@ -117,36 +126,36 @@ fn run_migration(command: MigrationCommand) -> anyhow::Result<()> {
     let schema = parse_sql_file(command.dialect, &command.schema_path)?;
     match migrations.diff(&schema) {
         Some(up_migration) => {
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time should be after epoch")
-                .as_secs();
+            let path_data = TemplateData {
+                timestamp: DateTime::<Utc>::from(SystemTime::now()),
+                name: command.name.clone(),
+                up_down: if opts.include_down {
+                    Some(UpDown::Up)
+                } else {
+                    None
+                },
+                ..Default::default()
+            };
+
+            let up_path = command
+                .migrations_dir
+                .join(opts.path_template.resolve(&path_data));
+
             if opts.include_down {
                 let down_migration = schema.diff(&migrations).unwrap_or_else(SyntaxTree::empty);
 
-                write_migration(
-                    up_migration,
-                    timestamp,
-                    &command.name,
-                    "up.sql",
-                    &command.migrations_dir,
-                )?;
+                let path_data = TemplateData {
+                    up_down: Some(UpDown::Down),
+                    ..path_data
+                };
+                let down_path = command
+                    .migrations_dir
+                    .join(opts.path_template.resolve(&path_data));
 
-                write_migration(
-                    down_migration,
-                    timestamp,
-                    &command.name,
-                    "down.sql",
-                    &command.migrations_dir,
-                )
+                write_migration(up_migration, &up_path)?;
+                write_migration(down_migration, &down_path)
             } else {
-                write_migration(
-                    up_migration,
-                    timestamp,
-                    &command.name,
-                    "sql",
-                    &command.migrations_dir,
-                )
+                write_migration(up_migration, &up_path)
             }
         }
         None => {
@@ -156,16 +165,12 @@ fn run_migration(command: MigrationCommand) -> anyhow::Result<()> {
     }
 }
 
-fn write_migration(
-    migration: SyntaxTree,
-    timestamp: u64,
-    name: &str,
-    ext: &str,
-    dir: &Utf8Path,
-) -> anyhow::Result<()> {
-    let filename = Utf8PathBuf::from(format!("{timestamp}_{name}.{ext}"));
-    let path = dir.join(filename);
+fn write_migration(migration: SyntaxTree, path: &Utf8Path) -> anyhow::Result<()> {
     eprintln!("writing {path}");
+    if let Some(parent) = path.parent() {
+        eprintln!("creating {parent}");
+        ensure_migration_dir(parent)?;
+    }
     OpenOptions::new()
         .write(true)
         .create(true)
@@ -199,10 +204,11 @@ fn ensure_migration_dir(dir: &Utf8Path) -> anyhow::Result<()> {
 
 fn parse_sql_file(dialect: Dialect, path: &Utf8Path) -> anyhow::Result<SyntaxTree> {
     let data = fs::read_to_string(path)?;
-    Ok(SyntaxTree::builder()
+    SyntaxTree::builder()
         .dialect(dialect)
         .sql(data.as_str())
-        .build()?)
+        .build()
+        .context(format!("path: {path}"))
 }
 
 /// builds a [SyntaxTree] by applying each migration in order
@@ -210,50 +216,74 @@ fn parse_migrations(
     dialect: Dialect,
     dir: &Utf8Path,
 ) -> anyhow::Result<(SyntaxTree, MigrationOptions)> {
-    let mut opts = MigrationOptions::default();
+    fn process_dir_entry(
+        entry: io::Result<Utf8DirEntry>,
+    ) -> anyhow::Result<Option<Vec<Utf8PathBuf>>> {
+        let entry = entry?;
+        let meta = entry.metadata()?;
+        let path: Utf8PathBuf = entry.path().into();
+        // step into any dir we encounter
+        if meta.is_dir() {
+            let res = entry
+                .into_path()
+                .read_dir_utf8()?
+                .map(process_dir_entry)
+                .collect::<anyhow::Result<Vec<Option<_>>>>()
+                .map(|e| Some(e.into_iter().flatten().flatten().collect::<Vec<_>>()));
+            return res;
+        }
+        // skip over non-file entries
+        if !meta.is_file() {
+            return Ok(None);
+        }
+        // skip over non-sql files
+        match path.extension() {
+            Some("sql") => {}
+            _ => {
+                eprintln!("skipping {path}");
+                return Ok(None);
+            }
+        };
+        let stem = path
+            .file_stem()
+            .ok_or_else(|| anyhow!("{:?} is missing a name", path))?;
+        // skip over "down" migrations
+        if stem.ends_with(".down") || stem.ends_with(".undo") || stem == "down" || stem == "undo" {
+            eprintln!("skipping {path}");
+            return Ok(None);
+        }
+
+        Ok(Some(vec![path]))
+    }
+
     let mut migrations = dir
         .read_dir_utf8()?
-        .map(|entry| -> anyhow::Result<_> {
-            let entry = entry?;
-            let meta = entry.metadata()?;
-            let path: Utf8PathBuf = entry.path().into();
-            // skip over non-file entries
-            if !meta.is_file() {
-                eprintln!("skipping {path}");
-                return Ok(None);
-            }
-            // skip over non-sql files
-            match path.extension() {
-                Some("sql") => {}
-                _ => {
-                    eprintln!("skipping {path}");
-                    return Ok(None);
-                }
-            };
-            let stem = path
-                .file_stem()
-                .ok_or_else(|| anyhow!("{:?} is missing a name", path))?;
-            // skip over "down" migrations
-            if stem.ends_with(".down") {
-                eprintln!("skipping {path}");
-                opts.include_down = true;
-                return Ok(None);
-            }
-
-            Ok(Some(path))
-        })
+        .map(process_dir_entry)
         .collect::<anyhow::Result<Vec<Option<_>>>>()?
         .into_iter()
         .flatten()
+        .flatten()
         .collect::<Vec<_>>();
     migrations.sort();
-    migrations
-        .into_iter()
-        .try_fold(SyntaxTree::empty(), |schema, path| -> anyhow::Result<_> {
-            eprintln!("parsing {path}");
-            let migration = parse_sql_file(dialect, &path)?;
-            let schema = schema.migrate(&migration).unwrap_or_else(SyntaxTree::empty);
-            Ok(schema)
-        })
-        .map(|t| (t, opts))
+    let path_template = match migrations.last() {
+        Some(path) => {
+            let path = path.strip_prefix(dir)?;
+            PathTemplate::parse(path.as_str()).context(format!("path: {path}"))?
+        }
+        None => PathTemplate::default(),
+    };
+    let opts = MigrationOptions {
+        include_down: path_template.includes_up_down(),
+        path_template,
+    };
+    let tree =
+        migrations
+            .iter()
+            .try_fold(SyntaxTree::empty(), |schema, path| -> anyhow::Result<_> {
+                eprintln!("parsing {path}");
+                let migration = parse_sql_file(dialect, path)?;
+                let schema = schema.migrate(&migration).unwrap_or_else(SyntaxTree::empty);
+                Ok(schema)
+            })?;
+    Ok((tree, opts))
 }

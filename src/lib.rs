@@ -8,26 +8,15 @@ use sqlparser::{
     dialect::{self},
     parser::{self, Parser},
 };
+use thiserror::Error;
 
 mod diff;
 mod migration;
+pub mod path_template;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParseError(parser::ParserError);
-
-impl From<parser::ParserError> for ParseError {
-    fn from(value: parser::ParserError) -> Self {
-        Self(value)
-    }
-}
-
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
-impl std::error::Error for ParseError {}
+#[derive(Error, Debug)]
+#[error("Oops, we couldn't parse that!")]
+pub struct ParseError(#[from] parser::ParserError);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum), clap(rename_all = "lower"))]
@@ -83,7 +72,7 @@ impl fmt::Display for Dialect {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SyntaxTree(Vec<Statement>);
 
 #[bon]
