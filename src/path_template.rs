@@ -78,11 +78,7 @@ mod parser {
     }
 
     fn padded_number(input: &mut &str) -> Result<Token> {
-        fn prefix<'i>(input: &mut &'i str) -> Result<&'i str> {
-            take_while(1.., '0').parse_next(input)
-        }
-
-        (prefix, digit1)
+        digit1
             .take()
             .parse_to::<PaddedNumber>()
             .map(Token::PaddedNumber)
@@ -370,7 +366,6 @@ mod parser {
                 epoch_timestamp,
                 semver,
                 padded_number,
-                random_number,
                 fail.context(StrContext::Label("number"))
                     .context(StrContext::Expected(StrContextValue::Description(
                         "datetime",
@@ -380,9 +375,6 @@ mod parser {
                     )))
                     .context(StrContext::Expected(StrContextValue::Description(
                         "padded number",
-                    )))
-                    .context(StrContext::Expected(StrContextValue::Description(
-                        "random number",
                     )))
                     .context(StrContext::Expected(StrContextValue::Description("semver"))),
             )),
