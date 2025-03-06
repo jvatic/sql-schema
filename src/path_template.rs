@@ -517,8 +517,25 @@ mod ast {
             self.segments.iter().any(|s| {
                 s.tokens
                     .iter()
+                    .rev()
                     .any(|t| matches!(t, Token::UpDown(_) | Token::DoUndo(_)))
             })
+        }
+
+        pub fn with_up_down(self) -> Self {
+            let mut segments = self.segments;
+            if let Some(s) = segments.last_mut() {
+                let ext = s.tokens.pop().unwrap_or(Token::Extension);
+                if !matches!(
+                    s.tokens.last(),
+                    Some(Token::UpDown(_)) | Some(Token::DoUndo(_))
+                ) {
+                    s.tokens.push(Token::Dot);
+                    s.tokens.push(Token::UpDown(UpDown::Up));
+                }
+                s.tokens.push(ext);
+            }
+            Self { segments }
         }
 
         pub fn resolve(&self, data: &TemplateData) -> String {
@@ -877,7 +894,19 @@ mod resolver {
         fn resolve(&self, data: &TemplateData) -> String {
             self.tokens
                 .iter()
-                .map(|t| Resolve::resolve(t, data))
+                .enumerate()
+                .map(|(i, t)| {
+                    let next = self.tokens.get(i + 1);
+                    // special case: when there's an UpDown token and we're not rendering it, also don't render the preceding Dot token.
+                    if data.up_down.is_none()
+                        && matches!(t, Token::Dot)
+                        && matches!(next, Some(Token::UpDown(_)))
+                    {
+                        String::new()
+                    } else {
+                        Resolve::resolve(t, data)
+                    }
+                })
                 .collect()
         }
     }
@@ -1129,19 +1158,19 @@ mod tests {
                 .context(format!("test case {i:02}"))
                 .expect(format!("{input} should parse").as_str());
             let data = data(&template);
+            let template = template.with_up_down();
             let out = template.resolve(&data);
             assert_eq!(
                 out, input,
                 "template should resolve to input\n{template:?}\n{data:?}"
             );
 
-            let includes_up_down = template.includes_up_down();
             vec![
-                |data: TemplateData, _: bool| TemplateData {
+                |data: TemplateData| TemplateData {
                     name: "some_other_name".to_owned(),
                     ..data
                 },
-                |data: TemplateData, _: bool| TemplateData {
+                |data: TemplateData| TemplateData {
                     timestamp: Utc::now(),
                     counter: Some(data.counter.map_or(1, |c| c + 1)),
                     random: Some(data.random.map_or(1, |r| r + 1)),
@@ -1151,28 +1180,18 @@ mod tests {
                     ),
                     ..data
                 },
-                // not run if template doesn't have the appropriate token
-                |data: TemplateData, includes_up_down: bool| {
-                    if includes_up_down {
-                        TemplateData {
-                            up_down: match data.up_down {
-                                Some(UpDown::Up) => Some(UpDown::Down),
-                                Some(UpDown::Down) => Some(UpDown::Up),
-                                None => Some(UpDown::Up),
-                            },
-                            ..data
-                        }
-                    } else {
-                        TemplateData {
-                            name: "no_up_down".to_owned(),
-                            ..data
-                        }
-                    }
+                |data: TemplateData| TemplateData {
+                    up_down: match data.up_down {
+                        Some(UpDown::Up) => Some(UpDown::Down),
+                        Some(UpDown::Down) => Some(UpDown::Up),
+                        None => Some(UpDown::Up),
+                    },
+                    ..data
                 },
             ]
             .into_iter()
             .for_each(|f| {
-                let data = f(data.clone(), includes_up_down);
+                let data = f(data.clone());
                 let out = template.resolve(&data);
                 assert_ne!(
                     out, input,

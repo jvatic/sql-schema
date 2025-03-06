@@ -137,9 +137,16 @@ fn run_migration(command: MigrationCommand) -> anyhow::Result<()> {
                 ..Default::default()
             };
 
+            let path_template = if opts.include_down {
+                // ensure template includes an UpDown token
+                opts.path_template.with_up_down()
+            } else {
+                opts.path_template
+            };
+
             let up_path = command
                 .migrations_dir
-                .join(opts.path_template.resolve(&path_data));
+                .join(path_template.resolve(&path_data));
 
             if opts.include_down {
                 let down_migration = schema.diff(&migrations).unwrap_or_else(SyntaxTree::empty);
@@ -150,7 +157,7 @@ fn run_migration(command: MigrationCommand) -> anyhow::Result<()> {
                 };
                 let down_path = command
                     .migrations_dir
-                    .join(opts.path_template.resolve(&path_data));
+                    .join(path_template.resolve(&path_data));
 
                 write_migration(up_migration, &up_path)?;
                 write_migration(down_migration, &down_path)
