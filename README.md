@@ -25,8 +25,9 @@ sql-schema schema \
 # -> writing ./schema/schema.sql
 
 # generate a migration after editing the schema file
-sql-schema migration --name my_new_migration \
-    --include-down true \ # default is true if any down migration exists
+sql-schema migration \
+    --name my_new_migration \ # default is "generated_migration"
+    --include-down true \ # default is true if any down migration exists OR if there aren't any
     --schema-path ./schema/schema.sql \ # this is the default value
     --migrations-dir ./schema/migrations # this is the default value
 # -> writing schema/migrations/1739486729_my_new_migration.up.sql
@@ -39,6 +40,13 @@ sql-schema migration --name my_new_migration \
 - Non restrictive: You can edit the generated migrations as needed (e.g. if you need to migrate data along side a schema change).
 - Minimal buy-in: You don't have to change anything about your project to start or stop using it (committing the generated schema is optional).
 - Works with any SQL dialect.
+- Plays nicely with other tools such as [sqlc](https://github.com/sqlc-dev/sqlc) and [sqlx](https://github.com/launchbadge/sqlx).
+
+## Assumptions
+
+- You have a dir containing migrations written in SQL using the `.sql` file extension.
+- The sum of all the migrations is your full database schema.
+- The migration file names are sortable and follow a supported naming convention.
 
 ## Licensing
 
