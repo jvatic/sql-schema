@@ -151,7 +151,11 @@ fn run_migration(command: MigrationCommand) -> anyhow::Result<()> {
                 .join(path_template.resolve(&path_data));
 
             if opts.include_down {
-                let down_migration = schema.diff(&migrations)?.unwrap_or_else(SyntaxTree::empty);
+                let down_migration = schema
+                    .diff(&migrations)
+                    .inspect_err(|err| eprintln!("WARNING: error creating down migration: {err}"))
+                    .unwrap_or(None)
+                    .unwrap_or_else(SyntaxTree::empty);
 
                 let path_data = TemplateData {
                     up_down: Some(UpDown::Down),
