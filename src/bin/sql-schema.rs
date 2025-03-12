@@ -1,6 +1,7 @@
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
+    process::{self},
     time::SystemTime,
 };
 
@@ -93,7 +94,8 @@ fn main() {
         Commands::Schema(command) => run_schema(command).context("schema"),
         Commands::Migration(command) => run_migration(command).context("migration"),
     } {
-        panic!("Error: {:?}", err)
+        eprintln!("Error: {err:?}");
+        process::exit(1);
     }
 }
 
@@ -104,8 +106,8 @@ fn run_schema(command: SchemaCommand) -> anyhow::Result<()> {
 
     let (migrations, _) = parse_migrations(command.dialect, &command.migrations_dir)?;
     let schema = parse_sql_file(command.dialect, &command.schema_path)?;
-    let diff = schema.diff(&migrations).unwrap_or_else(SyntaxTree::empty);
-    let schema = schema.migrate(&diff).unwrap_or_else(SyntaxTree::empty);
+    let diff = schema.diff(&migrations)?.unwrap_or_else(SyntaxTree::empty);
+    let schema = schema.migrate(&diff)?.unwrap_or_else(SyntaxTree::empty);
     eprintln!("writing {}", command.schema_path);
     OpenOptions::new()
         .write(true)
@@ -124,7 +126,7 @@ fn run_migration(command: MigrationCommand) -> anyhow::Result<()> {
     let (migrations, opts) = parse_migrations(command.dialect, &command.migrations_dir)?;
     let opts = opts.reconcile(&command);
     let schema = parse_sql_file(command.dialect, &command.schema_path)?;
-    match migrations.diff(&schema) {
+    match migrations.diff(&schema)? {
         Some(up_migration) => {
             let path_data = TemplateData {
                 timestamp: DateTime::<Utc>::from(SystemTime::now()),
@@ -149,7 +151,7 @@ fn run_migration(command: MigrationCommand) -> anyhow::Result<()> {
                 .join(path_template.resolve(&path_data));
 
             if opts.include_down {
-                let down_migration = schema.diff(&migrations).unwrap_or_else(SyntaxTree::empty);
+                let down_migration = schema.diff(&migrations)?.unwrap_or_else(SyntaxTree::empty);
 
                 let path_data = TemplateData {
                     up_down: Some(UpDown::Down),
@@ -289,7 +291,9 @@ fn parse_migrations(
             .try_fold(SyntaxTree::empty(), |schema, path| -> anyhow::Result<_> {
                 eprintln!("parsing {path}");
                 let migration = parse_sql_file(dialect, path)?;
-                let schema = schema.migrate(&migration).unwrap_or_else(SyntaxTree::empty);
+                let schema = schema
+                    .migrate(&migration)?
+                    .unwrap_or_else(SyntaxTree::empty);
                 Ok(schema)
             })?;
     Ok((tree, opts))

@@ -89,13 +89,16 @@ impl SyntaxTree {
     }
 }
 
+pub use diff::DiffError;
+pub use migration::MigrateError;
+
 impl SyntaxTree {
-    pub fn diff(&self, other: &SyntaxTree) -> Option<Self> {
-        Diff::diff(&self.0, &other.0).map(Self)
+    pub fn diff(&self, other: &SyntaxTree) -> Result<Option<Self>, DiffError> {
+        Ok(Diff::diff(&self.0, &other.0)?.map(Self))
     }
 
-    pub fn migrate(self, other: &SyntaxTree) -> Option<Self> {
-        Migrate::migrate(self.0, &other.0).map(Self)
+    pub fn migrate(self, other: &SyntaxTree) -> Result<Option<Self>, MigrateError> {
+        Ok(Migrate::migrate(self.0, &other.0)?.map(Self))
     }
 }
 
@@ -152,13 +155,18 @@ mod tests {
         assert_eq!(actual.to_string(), tc.expect, "{tc:?}");
     }
 
-    fn run_test_cases<F>(test_cases: Vec<TestCase>, testfn: F)
+    fn run_test_cases<F, E: fmt::Debug>(test_cases: Vec<TestCase>, testfn: F)
     where
-        F: Fn(SyntaxTree, SyntaxTree) -> SyntaxTree,
+        F: Fn(SyntaxTree, SyntaxTree) -> Result<Option<SyntaxTree>, E>,
     {
-        test_cases
-            .into_iter()
-            .for_each(|tc| run_test_case(&tc, |ast_a, ast_b| testfn(ast_a, ast_b)));
+        test_cases.into_iter().for_each(|tc| {
+            run_test_case(&tc, |ast_a, ast_b| {
+                testfn(ast_a, ast_b)
+                    .inspect_err(|err| eprintln!("Error: {err:?}"))
+                    .unwrap()
+                    .unwrap()
+            })
+        });
     }
 
     #[test]
@@ -175,7 +183,7 @@ mod tests {
                         CREATE TABLE bar (id INT PRIMARY KEY);",
                 expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
             }],
-            |ast_a, ast_b| ast_a.diff(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.diff(&ast_b),
         );
     }
 
@@ -193,7 +201,7 @@ mod tests {
                     )",
                 expect: "DROP TABLE bar;",
             }],
-            |ast_a, ast_b| ast_a.diff(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.diff(&ast_b),
         );
     }
 
@@ -211,7 +219,7 @@ mod tests {
                     )",
                 expect: "ALTER TABLE\n  foo\nADD\n  COLUMN bar TEXT;",
             }],
-            |ast_a, ast_b| ast_a.diff(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.diff(&ast_b),
         );
     }
 
@@ -229,7 +237,7 @@ mod tests {
                     )",
                 expect: "ALTER TABLE\n  foo DROP COLUMN bar;",
             }],
-            |ast_a, ast_b| ast_a.diff(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.diff(&ast_b),
         );
     }
 
@@ -250,7 +258,7 @@ mod tests {
                     expect: "DROP INDEX IF EXISTS title_idx;\n\nCREATE UNIQUE INDEX IF NOT EXISTS title_idx ON films((lower(title)));",
                 },
             ],
-            |ast_a, ast_b| ast_a.diff(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.diff(&ast_b),
         );
     }
 
@@ -301,7 +309,7 @@ mod tests {
                     expect: "ALTER TYPE bug_status\nADD\n  VALUE 'new' BEFORE 'open';\n\nALTER TYPE bug_status\nADD\n  VALUE 'closed';",
                 },
             ],
-            |ast_a, ast_b| ast_a.diff(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.diff(&ast_b),
         );
     }
 
@@ -314,7 +322,7 @@ mod tests {
                 sql_b: "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
                 expect: "DROP EXTENSION hstore;\n\nCREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
             }],
-            |ast_a, ast_b| ast_a.diff(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.diff(&ast_b),
         );
     }
 
@@ -327,7 +335,7 @@ mod tests {
                 sql_b: "CREATE TABLE foo (id INT PRIMARY KEY);",
                 expect: "CREATE TABLE bar (id INT PRIMARY KEY);\n\nCREATE TABLE foo (id INT PRIMARY KEY);",
             }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.migrate(&ast_b),
         );
     }
 
@@ -340,7 +348,7 @@ mod tests {
                 sql_b: "DROP TABLE bar; CREATE TABLE foo (id INT PRIMARY KEY)",
                 expect: "CREATE TABLE foo (id INT PRIMARY KEY);",
             }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.migrate(&ast_b),
         );
     }
 
@@ -353,7 +361,7 @@ mod tests {
                 sql_b: "ALTER TABLE bar ADD COLUMN bar TEXT",
                 expect: "CREATE TABLE bar (id INT PRIMARY KEY, bar TEXT);",
             }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.migrate(&ast_b),
         );
     }
 
@@ -366,7 +374,7 @@ mod tests {
                 sql_b: "ALTER TABLE bar DROP COLUMN bar",
                 expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
             }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.migrate(&ast_b),
         );
     }
 
@@ -417,7 +425,7 @@ mod tests {
                     expect: "CREATE TABLE bar (\n  bar INTEGER GENERATED ALWAYS AS IDENTITY (START WITH 10),\n  id INT PRIMARY KEY\n);",
                 },
             ],
-            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.migrate(&ast_b),
         );
     }
 
@@ -444,7 +452,7 @@ mod tests {
                     expect: "CREATE INDEX code_idx ON films(code);",
                 },
             ],
-            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.migrate(&ast_b),
         );
     }
 
@@ -457,7 +465,7 @@ mod tests {
                 sql_b: "CREATE TYPE compfoo AS (f1 int, f2 text);",
                 expect: "CREATE TYPE bug_status AS ENUM ('open', 'closed');\n\nCREATE TYPE compfoo AS (f1 INT, f2 TEXT);",
             }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.migrate(&ast_b),
         );
     }
 
@@ -470,7 +478,7 @@ mod tests {
                 sql_b: "ALTER TYPE bug_status RENAME TO issue_status",
                 expect: "CREATE TYPE issue_status AS ENUM ('open', 'closed');",
             }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.migrate(&ast_b),
         );
     }
 
@@ -497,7 +505,7 @@ mod tests {
                     expect: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
                 },
             ],
-            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.migrate(&ast_b),
         );
     }
 
@@ -510,7 +518,7 @@ mod tests {
                 sql_b: "ALTER TYPE bug_status RENAME VALUE 'new' TO 'open';",
                 expect: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
             }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.migrate(&ast_b),
         );
     }
 
@@ -523,7 +531,7 @@ mod tests {
                 sql_b: "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
                 expect: "CREATE EXTENSION hstore;\n\nCREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
             }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b).unwrap(),
+            |ast_a, ast_b| ast_a.migrate(&ast_b),
         );
     }
 }

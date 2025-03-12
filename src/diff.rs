@@ -1,70 +1,143 @@
-use std::{cmp::Ordering, collections::HashSet};
+use std::{cmp::Ordering, collections::HashSet, fmt};
 
+use bon::bon;
 use sqlparser::ast::{
     AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
     AlterTypeOperation, CreateIndex, CreateTable, Ident, ObjectName, ObjectType, Statement,
     UserDefinedTypeRepresentation,
 };
+use thiserror::Error;
 
-pub trait Diff: Sized {
+#[derive(Error, Debug)]
+pub struct DiffError {
+    kind: DiffErrorKind,
+    statement_a: Option<Statement>,
+    statement_b: Option<Statement>,
+}
+
+impl fmt::Display for DiffError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Oops, we couldn't diff that: {reason}",
+            reason = self.kind
+        )?;
+        if let Some(statement_a) = &self.statement_a {
+            write!(f, "\n\nStatement A:\n{statement_a}")?;
+        }
+        if let Some(statement_b) = &self.statement_b {
+            write!(f, "\n\nStatement B:\n{statement_b}")?;
+        }
+        Ok(())
+    }
+}
+
+#[bon]
+impl DiffError {
+    #[builder]
+    fn new(
+        kind: DiffErrorKind,
+        statement_a: Option<Statement>,
+        statement_b: Option<Statement>,
+    ) -> Self {
+        Self {
+            kind,
+            statement_a,
+            statement_b,
+        }
+    }
+}
+
+#[derive(Error, Debug)]
+#[non_exhaustive]
+enum DiffErrorKind {
+    #[error("can't drop unnamed index")]
+    DropUnnamedIndex,
+    #[error("can't compare unnamed index")]
+    CompareUnnamedIndex,
+    #[error("removing enum labels is not supported")]
+    RemoveEnumLabel,
+    #[error("not yet supported")]
+    NotImplemented,
+}
+
+pub(crate) trait Diff: Sized {
     type Diff;
 
-    fn diff(&self, other: &Self) -> Self::Diff;
+    fn diff(&self, other: &Self) -> Result<Self::Diff, DiffError>;
 }
 
 impl Diff for Vec<Statement> {
     type Diff = Option<Vec<Statement>>;
 
-    fn diff(&self, other: &Self) -> Self::Diff {
+    fn diff(&self, other: &Self) -> Result<Self::Diff, DiffError> {
         let res = self
             .iter()
-            .filter_map(|sa| match sa {
-                // CreateTable: compare against another CreateTable with the same name
-                // TODO: handle renames (e.g. use comments to tag a previous name for a table in a schema)
-                Statement::CreateTable(a) => find_and_compare_create_table(sa, a, other),
-                Statement::CreateIndex(a) => find_and_compare_create_index(sa, a, other),
-                Statement::CreateType { name, .. } => find_and_compare_create_type(sa, name, other),
-                Statement::CreateExtension {
-                    name,
-                    if_not_exists,
-                    cascade,
-                    ..
-                } => find_and_compare_create_extension(sa, name, *if_not_exists, *cascade, other),
-                _ => todo!("diff all kinds of statments"),
+            .filter_map(|sa| {
+                match sa {
+                    // CreateTable: compare against another CreateTable with the same name
+                    // TODO: handle renames (e.g. use comments to tag a previous name for a table in a schema)
+                    Statement::CreateTable(a) => find_and_compare_create_table(sa, a, other),
+                    Statement::CreateIndex(a) => find_and_compare_create_index(sa, a, other),
+                    Statement::CreateType { name, .. } => {
+                        find_and_compare_create_type(sa, name, other)
+                    }
+                    Statement::CreateExtension {
+                        name,
+                        if_not_exists,
+                        cascade,
+                        ..
+                    } => {
+                        find_and_compare_create_extension(sa, name, *if_not_exists, *cascade, other)
+                    }
+                    _ => Err(DiffError::builder()
+                        .kind(DiffErrorKind::NotImplemented)
+                        .statement_a(sa.clone())
+                        .build()),
+                }
+                .transpose()
             })
             // find resources that are in `other` but not in `self`
             .chain(other.iter().filter_map(|sb| {
                 match sb {
-                    Statement::CreateTable(b) => self.iter().find(|sa| match sa {
+                    Statement::CreateTable(b) => Ok(self.iter().find(|sa| match sa {
                         Statement::CreateTable(a) => a.name == b.name,
                         _ => false,
-                    }),
-                    Statement::CreateIndex(b) => self.iter().find(|sa| match sa {
+                    })),
+                    Statement::CreateIndex(b) => Ok(self.iter().find(|sa| match sa {
                         Statement::CreateIndex(a) => a.name == b.name,
                         _ => false,
-                    }),
-                    Statement::CreateType { name: b_name, .. } => self.iter().find(|sa| match sa {
-                        Statement::CreateType { name: a_name, .. } => a_name == b_name,
-                        _ => false,
-                    }),
+                    })),
+                    Statement::CreateType { name: b_name, .. } => {
+                        Ok(self.iter().find(|sa| match sa {
+                            Statement::CreateType { name: a_name, .. } => a_name == b_name,
+                            _ => false,
+                        }))
+                    }
                     Statement::CreateExtension { name: b_name, .. } => {
-                        self.iter().find(|sa| match sa {
+                        Ok(self.iter().find(|sa| match sa {
                             Statement::CreateExtension { name: a_name, .. } => a_name == b_name,
                             _ => false,
-                        })
+                        }))
                     }
-                    _ => todo!("diff all kinds of statements (other)"),
+                    _ => Err(DiffError::builder()
+                        .kind(DiffErrorKind::NotImplemented)
+                        .statement_a(sb.clone())
+                        .build()),
                 }
+                .transpose()
                 // return the statement if it's not in `self`
-                .map_or_else(|| Some(vec![sb.clone()]), |_| None)
+                .map_or_else(|| Some(Ok(vec![sb.clone()])), |_| None)
             }))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
             .flatten()
             .collect::<Vec<_>>();
 
         if res.is_empty() {
-            None
+            Ok(None)
         } else {
-            Some(res)
+            Ok(Some(res))
         }
     }
 }
@@ -74,10 +147,10 @@ fn find_and_compare<MF, DF>(
     other: &[Statement],
     match_fn: MF,
     drop_fn: DF,
-) -> Option<Vec<Statement>>
+) -> Result<Option<Vec<Statement>>, DiffError>
 where
     MF: Fn(&&Statement) -> bool,
-    DF: Fn() -> Option<Vec<Statement>>,
+    DF: Fn() -> Result<Option<Vec<Statement>>, DiffError>,
 {
     other.iter().find(match_fn).map_or_else(
         // drop the statement if it wasn't found in `other`
@@ -91,7 +164,7 @@ fn find_and_compare_create_table(
     sa: &Statement,
     a: &CreateTable,
     other: &[Statement],
-) -> Option<Vec<Statement>> {
+) -> Result<Option<Vec<Statement>>, DiffError> {
     find_and_compare(
         sa,
         other,
@@ -100,7 +173,7 @@ fn find_and_compare_create_table(
             _ => false,
         },
         || {
-            Some(vec![Statement::Drop {
+            Ok(Some(vec![Statement::Drop {
                 object_type: sqlparser::ast::ObjectType::Table,
                 if_exists: a.if_not_exists,
                 names: vec![a.name.clone()],
@@ -108,7 +181,7 @@ fn find_and_compare_create_table(
                 restrict: false,
                 purge: false,
                 temporary: false,
-            }])
+            }]))
         },
     )
 }
@@ -117,7 +190,7 @@ fn find_and_compare_create_index(
     sa: &Statement,
     a: &CreateIndex,
     other: &[Statement],
-) -> Option<Vec<Statement>> {
+) -> Result<Option<Vec<Statement>>, DiffError> {
     find_and_compare(
         sa,
         other,
@@ -126,11 +199,14 @@ fn find_and_compare_create_index(
             _ => false,
         },
         || {
-            let name = a
-                .name
-                .clone()
-                .expect("can't drop an unnamed index, please ensure all indexes are named");
-            Some(vec![Statement::Drop {
+            let name = a.name.clone().ok_or_else(|| {
+                DiffError::builder()
+                    .kind(DiffErrorKind::DropUnnamedIndex)
+                    .statement_a(sa.clone())
+                    .build()
+            })?;
+
+            Ok(Some(vec![Statement::Drop {
                 object_type: sqlparser::ast::ObjectType::Index,
                 if_exists: a.if_not_exists,
                 names: vec![name],
@@ -138,7 +214,7 @@ fn find_and_compare_create_index(
                 restrict: false,
                 purge: false,
                 temporary: false,
-            }])
+            }]))
         },
     )
 }
@@ -147,7 +223,7 @@ fn find_and_compare_create_type(
     sa: &Statement,
     a_name: &ObjectName,
     other: &[Statement],
-) -> Option<Vec<Statement>> {
+) -> Result<Option<Vec<Statement>>, DiffError> {
     find_and_compare(
         sa,
         other,
@@ -156,7 +232,7 @@ fn find_and_compare_create_type(
             _ => false,
         },
         || {
-            Some(vec![Statement::Drop {
+            Ok(Some(vec![Statement::Drop {
                 object_type: sqlparser::ast::ObjectType::Type,
                 if_exists: false,
                 names: vec![a_name.clone()],
@@ -164,7 +240,7 @@ fn find_and_compare_create_type(
                 restrict: false,
                 purge: false,
                 temporary: false,
-            }])
+            }]))
         },
     )
 }
@@ -175,7 +251,7 @@ fn find_and_compare_create_extension(
     if_not_exists: bool,
     cascade: bool,
     other: &[Statement],
-) -> Option<Vec<Statement>> {
+) -> Result<Option<Vec<Statement>>, DiffError> {
     find_and_compare(
         sa,
         other,
@@ -184,7 +260,7 @@ fn find_and_compare_create_extension(
             _ => false,
         },
         || {
-            Some(vec![Statement::DropExtension {
+            Ok(Some(vec![Statement::DropExtension {
                 names: vec![a_name.clone()],
                 if_exists: if_not_exists,
                 cascade_or_restrict: if cascade {
@@ -192,7 +268,7 @@ fn find_and_compare_create_extension(
                 } else {
                     None
                 },
-            }])
+            }]))
         },
     )
 }
@@ -200,15 +276,15 @@ fn find_and_compare_create_extension(
 impl Diff for Statement {
     type Diff = Option<Vec<Statement>>;
 
-    fn diff(&self, other: &Self) -> Self::Diff {
+    fn diff(&self, other: &Self) -> Result<Self::Diff, DiffError> {
         match self {
             Self::CreateTable(a) => match other {
-                Self::CreateTable(b) => compare_create_table(a, b),
-                _ => None,
+                Self::CreateTable(b) => Ok(compare_create_table(a, b)),
+                _ => Ok(None),
             },
             Self::CreateIndex(a) => match other {
                 Self::CreateIndex(b) => compare_create_index(a, b),
-                _ => None,
+                _ => Ok(None),
             },
             Self::CreateType {
                 name: a_name,
@@ -217,10 +293,14 @@ impl Diff for Statement {
                 Self::CreateType {
                     name: b_name,
                     representation: b_rep,
-                } => compare_create_type(a_name, a_rep, b_name, b_rep),
-                _ => None,
+                } => compare_create_type(self, a_name, a_rep, other, b_name, b_rep),
+                _ => Ok(None),
             },
-            _ => todo!("implement diff for all `Statement`s"),
+            _ => Err(DiffError::builder()
+                .kind(DiffErrorKind::NotImplemented)
+                .statement_a(self.clone())
+                .statement_b(other.clone())
+                .build()),
         }
     }
 }
@@ -273,17 +353,24 @@ fn compare_create_table(a: &CreateTable, b: &CreateTable) -> Option<Vec<Statemen
     }])
 }
 
-fn compare_create_index(a: &CreateIndex, b: &CreateIndex) -> Option<Vec<Statement>> {
+fn compare_create_index(
+    a: &CreateIndex,
+    b: &CreateIndex,
+) -> Result<Option<Vec<Statement>>, DiffError> {
     if a == b {
-        return None;
+        return Ok(None);
     }
 
     if a.name.is_none() || b.name.is_none() {
-        panic!("can't diff unnamed indexes!");
+        return Err(DiffError::builder()
+            .kind(DiffErrorKind::CompareUnnamedIndex)
+            .statement_a(Statement::CreateIndex(a.clone()))
+            .statement_b(Statement::CreateIndex(b.clone()))
+            .build());
     }
     let name = a.name.clone().unwrap();
 
-    Some(vec![
+    Ok(Some(vec![
         Statement::Drop {
             object_type: ObjectType::Index,
             if_exists: a.if_not_exists,
@@ -294,17 +381,19 @@ fn compare_create_index(a: &CreateIndex, b: &CreateIndex) -> Option<Vec<Statemen
             temporary: false,
         },
         Statement::CreateIndex(b.clone()),
-    ])
+    ]))
 }
 
 fn compare_create_type(
+    a: &Statement,
     a_name: &ObjectName,
     a_rep: &UserDefinedTypeRepresentation,
+    b: &Statement,
     b_name: &ObjectName,
     b_rep: &UserDefinedTypeRepresentation,
-) -> Option<Vec<Statement>> {
+) -> Result<Option<Vec<Statement>>, DiffError> {
     if a_name == b_name && a_rep == b_rep {
-        return None;
+        return Ok(None);
     }
 
     let operations = match a_rep {
@@ -376,20 +465,38 @@ fn compare_create_type(
                         operations
                     }
                     _ => {
-                        todo!("Handle removing labels from an enum")
+                        return Err(DiffError::builder()
+                            .kind(DiffErrorKind::RemoveEnumLabel)
+                            .statement_a(a.clone())
+                            .statement_b(b.clone())
+                            .build());
                     }
                 }
             }
-            _ => todo!("DROP type and CREATE type"),
+            _ => {
+                // TODO: DROP and CREATE type
+                return Err(DiffError::builder()
+                    .kind(DiffErrorKind::NotImplemented)
+                    .statement_a(a.clone())
+                    .statement_b(b.clone())
+                    .build());
+            }
         },
-        _ => todo!("handle diffing composite attributes for CREATE TYPE"),
+        _ => {
+            // TODO: handle diffing composite attributes for CREATE TYPE
+            return Err(DiffError::builder()
+                .kind(DiffErrorKind::NotImplemented)
+                .statement_a(a.clone())
+                .statement_b(b.clone())
+                .build());
+        }
     };
 
     if operations.is_empty() {
-        return None;
+        return Ok(None);
     }
 
-    Some(
+    Ok(Some(
         operations
             .into_iter()
             .map(|operation| {
@@ -399,5 +506,5 @@ fn compare_create_type(
                 })
             })
             .collect(),
-    )
+    ))
 }
