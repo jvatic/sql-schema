@@ -12,6 +12,7 @@ use thiserror::Error;
 
 mod diff;
 mod migration;
+pub mod name_gen;
 pub mod path_template;
 
 #[derive(Error, Debug)]
@@ -73,7 +74,7 @@ impl fmt::Display for Dialect {
 }
 
 #[derive(Debug, Clone)]
-pub struct SyntaxTree(Vec<Statement>);
+pub struct SyntaxTree(pub(crate) Vec<Statement>);
 
 #[bon]
 impl SyntaxTree {

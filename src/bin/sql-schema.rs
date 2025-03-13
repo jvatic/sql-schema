@@ -10,6 +10,7 @@ use camino::{Utf8DirEntry, Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use sql_schema::{
+    name_gen,
     path_template::{PathTemplate, TemplateData, UpDown},
     Dialect, SyntaxTree,
 };
@@ -57,8 +58,8 @@ struct MigrationCommand {
     #[arg(short, long, default_value_t = Dialect::Generic)]
     dialect: Dialect,
     /// name of migration
-    #[arg(short, long, default_value = "generated_migration")]
-    name: String,
+    #[arg(short, long)]
+    name: Option<String>,
     /// creates both an up and down migration when true
     ///
     /// default is to match the pattern in the migrations dir
@@ -70,6 +71,7 @@ struct MigrationCommand {
 struct MigrationOptions {
     path_template: PathTemplate,
     include_down: bool,
+    num_migrations: usize,
 }
 
 impl MigrationOptions {
@@ -83,6 +85,7 @@ impl MigrationOptions {
         Self {
             include_down,
             path_template,
+            ..self
         }
     }
 }
@@ -128,9 +131,19 @@ fn run_migration(command: MigrationCommand) -> anyhow::Result<()> {
     let schema = parse_sql_file(command.dialect, &command.schema_path)?;
     match migrations.diff(&schema)? {
         Some(up_migration) => {
+            let name = if opts.num_migrations == 0 {
+                "initial_schema".to_owned()
+            } else {
+                match command.name.as_ref() {
+                    Some(name) => name.clone(),
+                    None => name_gen::generate_name(&up_migration)
+                        .build()
+                        .unwrap_or_else(|| "generated_migration".to_owned()),
+                }
+            };
             let path_data = TemplateData {
                 timestamp: DateTime::<Utc>::from(SystemTime::now()),
-                name: command.name.clone(),
+                name,
                 up_down: if opts.include_down {
                     Some(UpDown::Up)
                 } else {
@@ -288,6 +301,7 @@ fn parse_migrations(
     let opts = MigrationOptions {
         include_down: path_template.includes_up_down(),
         path_template,
+        num_migrations: migrations.len(),
     };
     let tree =
         migrations
