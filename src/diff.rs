@@ -181,6 +181,7 @@ fn find_and_compare_create_table(
                 restrict: false,
                 purge: false,
                 temporary: false,
+                table: None,
             }]))
         },
     )
@@ -214,6 +215,7 @@ fn find_and_compare_create_index(
                 restrict: false,
                 purge: false,
                 temporary: false,
+                table: None,
             }]))
         },
     )
@@ -240,6 +242,7 @@ fn find_and_compare_create_type(
                 restrict: false,
                 purge: false,
                 temporary: false,
+                table: None,
             }]))
         },
     )
@@ -325,6 +328,7 @@ fn compare_create_table(a: &CreateTable, b: &CreateTable) -> Option<Vec<Statemen
                     column_name: ac.name.clone(),
                     if_exists: a.if_not_exists,
                     drop_behavior: None,
+                    has_column_keyword: true,
                 })
             }
         })
@@ -350,6 +354,7 @@ fn compare_create_table(a: &CreateTable, b: &CreateTable) -> Option<Vec<Statemen
         operations: ops,
         location: None,
         on_cluster: a.on_cluster.clone(),
+        iceberg: false,
     }])
 }
 
@@ -379,6 +384,7 @@ fn compare_create_index(
             restrict: false,
             purge: false,
             temporary: false,
+            table: None,
         },
         Statement::CreateIndex(b.clone()),
     ]))
