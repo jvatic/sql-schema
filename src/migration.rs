@@ -121,6 +121,13 @@ impl Migrate for Vec<Statement> {
                             _ => false,
                         })
                         .map_or(Some(Ok(orig)), |sb| sa.migrate(sb).transpose()),
+                    Statement::CreateDomain(a) => other
+                        .iter()
+                        .find(|sb| match sb {
+                            Statement::DropDomain(b) => a.name == b.name,
+                            _ => false,
+                        })
+                        .map_or(Some(Ok(orig)), |sb| sa.migrate(sb).transpose()),
                     _ => Some(Err(MigrateError::builder()
                         .kind(MigrateErrorKind::NotImplemented)
                         .statement_a(sa.clone())
@@ -132,7 +139,8 @@ impl Migrate for Vec<Statement> {
                 Statement::CreateTable(_)
                 | Statement::CreateIndex { .. }
                 | Statement::CreateType { .. }
-                | Statement::CreateExtension { .. } => Some(Ok(sb.clone())),
+                | Statement::CreateExtension { .. }
+                | Statement::CreateDomain(..) => Some(Ok(sb.clone())),
                 _ => None,
             }))
             .collect::<Result<_, _>>()?;

@@ -328,6 +328,32 @@ mod tests {
     }
 
     #[test]
+    fn diff_create_domain() {
+        run_test_cases(
+            vec![TestCase {
+                dialect: Dialect::PostgreSql,
+                sql_a: "",
+                sql_b: "CREATE DOMAIN email AS VARCHAR(255) CHECK (VALUE ~ '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$');",
+                expect: "CREATE DOMAIN email AS VARCHAR(255) CHECK (\n  VALUE ~ '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'\n);",
+            }],
+            |ast_a, ast_b| ast_a.diff(&ast_b),
+        );
+    }
+
+    #[test]
+    fn diff_edit_domain() {
+        run_test_cases(
+            vec![TestCase {
+                dialect: Dialect::PostgreSql,
+                sql_a: "CREATE DOMAIN positive_int AS INTEGER CHECK (VALUE > 0);",
+                sql_b: "CREATE DOMAIN positive_int AS BIGINT CHECK (VALUE > 0 AND VALUE < 1000000);",
+                expect: "DROP DOMAIN IF EXISTS positive_int;\n\nCREATE DOMAIN positive_int AS BIGINT CHECK (\n  VALUE > 0\n  AND VALUE < 1000000\n);",
+            }],
+            |ast_a, ast_b| ast_a.diff(&ast_b),
+        );
+    }
+
+    #[test]
     fn apply_create_table() {
         run_test_cases(
             vec![TestCase {
@@ -531,6 +557,19 @@ mod tests {
                 sql_a: "CREATE EXTENSION hstore;",
                 sql_b: "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
                 expect: "CREATE EXTENSION hstore;\n\nCREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
+            }],
+            |ast_a, ast_b| ast_a.migrate(&ast_b),
+        );
+    }
+
+    #[test]
+    fn apply_create_domain() {
+        run_test_cases(
+            vec![TestCase {
+                dialect: Dialect::PostgreSql,
+                sql_a: "CREATE DOMAIN positive_int AS INTEGER CHECK (VALUE > 0);",
+                sql_b: "CREATE DOMAIN email AS VARCHAR(255) CHECK (VALUE ~ '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$');",
+                expect: "CREATE DOMAIN positive_int AS INTEGER CHECK (VALUE > 0);\n\nCREATE DOMAIN email AS VARCHAR(255) CHECK (\n  VALUE ~ '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'\n);",
             }],
             |ast_a, ast_b| ast_a.migrate(&ast_b),
         );

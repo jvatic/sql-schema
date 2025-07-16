@@ -3,8 +3,8 @@ use std::{cmp::Ordering, collections::HashSet, fmt};
 use bon::bon;
 use sqlparser::ast::{
     AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
-    AlterTypeOperation, CreateIndex, CreateTable, Ident, ObjectName, ObjectType, Statement,
-    UserDefinedTypeRepresentation,
+    AlterTypeOperation, CreateDomain, CreateIndex, CreateTable, DropDomain, Ident, ObjectName,
+    ObjectType, Statement, UserDefinedTypeRepresentation,
 };
 use thiserror::Error;
 
@@ -90,6 +90,7 @@ impl Diff for Vec<Statement> {
                     } => {
                         find_and_compare_create_extension(sa, name, *if_not_exists, *cascade, other)
                     }
+                    Statement::CreateDomain(a) => find_and_compare_create_domain(sa, a, other),
                     _ => Err(DiffError::builder()
                         .kind(DiffErrorKind::NotImplemented)
                         .statement_a(sa.clone())
@@ -120,6 +121,10 @@ impl Diff for Vec<Statement> {
                             _ => false,
                         }))
                     }
+                    Statement::CreateDomain(b) => Ok(self.iter().find(|sa| match sa {
+                        Statement::CreateDomain(a) => a.name == b.name,
+                        _ => false,
+                    })),
                     _ => Err(DiffError::builder()
                         .kind(DiffErrorKind::NotImplemented)
                         .statement_a(sb.clone())
@@ -276,6 +281,23 @@ fn find_and_compare_create_extension(
     )
 }
 
+fn find_and_compare_create_domain(
+    orig: &Statement,
+    domain: &CreateDomain,
+    other: &[Statement],
+) -> Result<Option<Vec<Statement>>, DiffError> {
+    let res = other
+        .iter()
+        .find(|sb| match sb {
+            Statement::CreateDomain(b) => b.name == domain.name,
+            _ => false,
+        })
+        .map(|sb| orig.diff(sb))
+        .transpose()?
+        .flatten();
+    Ok(res)
+}
+
 impl Diff for Statement {
     type Diff = Option<Vec<Statement>>;
 
@@ -297,6 +319,10 @@ impl Diff for Statement {
                     name: b_name,
                     representation: b_rep,
                 } => compare_create_type(self, a_name, a_rep, other, b_name, b_rep),
+                _ => Ok(None),
+            },
+            Self::CreateDomain(a) => match other {
+                Self::CreateDomain(b) => Ok(compare_create_domain(a, b)),
                 _ => Ok(None),
             },
             _ => Err(DiffError::builder()
@@ -513,4 +539,19 @@ fn compare_create_type(
             })
             .collect(),
     ))
+}
+
+fn compare_create_domain(a: &CreateDomain, b: &CreateDomain) -> Option<Vec<Statement>> {
+    if a == b {
+        return None;
+    }
+
+    Some(vec![
+        Statement::DropDomain(DropDomain {
+            if_exists: true,
+            name: a.name.clone(),
+            drop_behavior: None,
+        }),
+        Statement::CreateDomain(b.clone()),
+    ])
 }
