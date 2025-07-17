@@ -950,7 +950,7 @@ mod resolver {
             } else {
                 self.clone().increment_minor()
             };
-            format!("{}", num)
+            format!("{num}")
         }
     }
 
