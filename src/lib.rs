@@ -138,20 +138,20 @@ mod tests {
         F: Fn(SyntaxTree, SyntaxTree) -> SyntaxTree,
     {
         let ast_a = SyntaxTree::builder()
-            .dialect(tc.dialect.clone())
+            .dialect(tc.dialect)
             .sql(tc.sql_a)
             .build()
             .unwrap();
         let ast_b = SyntaxTree::builder()
-            .dialect(tc.dialect.clone())
+            .dialect(tc.dialect)
             .sql(tc.sql_b)
             .build()
             .unwrap();
         SyntaxTree::builder()
-            .dialect(tc.dialect.clone())
+            .dialect(tc.dialect)
             .sql(tc.expect)
             .build()
-            .expect(format!("invalid SQL: {:?}", tc.expect).as_str());
+            .unwrap_or_else(|_| panic!("invalid SQL: {:?}", tc.expect));
         let actual = testfn(ast_a, ast_b);
         assert_eq!(actual.to_string(), tc.expect, "{tc:?}");
     }

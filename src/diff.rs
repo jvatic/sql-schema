@@ -11,8 +11,8 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub struct DiffError {
     kind: DiffErrorKind,
-    statement_a: Option<Statement>,
-    statement_b: Option<Statement>,
+    statement_a: Option<Box<Statement>>,
+    statement_b: Option<Box<Statement>>,
 }
 
 impl fmt::Display for DiffError {
@@ -42,8 +42,8 @@ impl DiffError {
     ) -> Self {
         Self {
             kind,
-            statement_a,
-            statement_b,
+            statement_a: statement_a.map(Box::new),
+            statement_b: statement_b.map(Box::new),
         }
     }
 }

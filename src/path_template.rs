@@ -1070,8 +1070,7 @@ mod tests {
         let mut timestamp = data.timestamp;
         tmpl.segments
             .iter()
-            .map(|s| &s.tokens)
-            .flatten()
+            .flat_map(|s| &s.tokens)
             .for_each(|t| {
                 match t {
                     Token::Timestamp(ts) => timestamp = ts.clone().try_into().unwrap(),
@@ -1156,7 +1155,7 @@ mod tests {
             eprintln!("{input:?}");
             let template = super::parser::parse(input)
                 .context(format!("test case {i:02}"))
-                .expect(format!("{input} should parse").as_str());
+                .unwrap_or_else(|_| panic!("{input} should parse"));
             let data = data(&template);
             let template = template.with_up_down();
             let out = template.resolve(&data);

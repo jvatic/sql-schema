@@ -11,8 +11,8 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub struct MigrateError {
     kind: MigrateErrorKind,
-    statement_a: Option<Statement>,
-    statement_b: Option<Statement>,
+    statement_a: Option<Box<Statement>>,
+    statement_b: Option<Box<Statement>>,
 }
 
 impl fmt::Display for MigrateError {
@@ -42,8 +42,8 @@ impl MigrateError {
     ) -> Self {
         Self {
             kind,
-            statement_a,
-            statement_b,
+            statement_a: statement_a.map(Box::new),
+            statement_b: statement_b.map(Box::new),
         }
     }
 }
@@ -54,9 +54,9 @@ enum MigrateErrorKind {
     #[error("can't migrate unnamed index")]
     UnnamedIndex,
     #[error("ALTER TABLE operation \"{0}\" not yet supported")]
-    AlterTableOpNotImplemented(AlterTableOperation),
+    AlterTableOpNotImplemented(Box<AlterTableOperation>),
     #[error("invalid ALTER TYPE operation \"{0}\"")]
-    AlterTypeInvalidOp(AlterTypeOperation),
+    AlterTypeInvalidOp(Box<AlterTypeOperation>),
     #[error("not yet supported")]
     NotImplemented,
 }
@@ -325,7 +325,9 @@ fn migrate_alter_table(
             }
             op => {
                 return Err(MigrateError::builder()
-                    .kind(MigrateErrorKind::AlterTableOpNotImplemented(op.clone()))
+                    .kind(MigrateErrorKind::AlterTableOpNotImplemented(Box::new(
+                        op.clone(),
+                    )))
                     .statement_a(Statement::CreateTable(t.clone()))
                     .build())
             }
@@ -380,9 +382,9 @@ fn migrate_alter_type(
                 Ok((name, UserDefinedTypeRepresentation::Enum { labels }))
             }
             UserDefinedTypeRepresentation::Composite { .. } => Err(MigrateError::builder()
-                .kind(MigrateErrorKind::AlterTypeInvalidOp(
+                .kind(MigrateErrorKind::AlterTypeInvalidOp(Box::new(
                     other.operation.clone(),
-                ))
+                )))
                 .statement_a(Statement::CreateType {
                     name,
                     representation,
@@ -400,9 +402,9 @@ fn migrate_alter_type(
                 Ok((name, UserDefinedTypeRepresentation::Enum { labels }))
             }
             UserDefinedTypeRepresentation::Composite { .. } => Err(MigrateError::builder()
-                .kind(MigrateErrorKind::AlterTypeInvalidOp(
+                .kind(MigrateErrorKind::AlterTypeInvalidOp(Box::new(
                     other.operation.clone(),
-                ))
+                )))
                 .statement_a(Statement::CreateType {
                     name,
                     representation,
