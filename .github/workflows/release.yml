@@ -21,6 +21,7 @@ jobs:
     outputs:
       ref: ${{ steps.get-ref.outputs.ref }}
       version: ${{ steps.get-ref.outputs.version }}
+      version_number: ${{ steps.get-ref.outputs.version_number }}
     steps:
       - name: Determine ref and version
         id: get-ref
@@ -34,8 +35,12 @@ jobs:
           # Extract version from ref (remove refs/tags/ prefix if present)
           VERSION="${REF#refs/tags/}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          # Also create version without 'v' prefix for cargo
+          VERSION_NUMBER="${VERSION#v}"
+          echo "version_number=$VERSION_NUMBER" >> $GITHUB_OUTPUT
           echo "Using ref: $REF"
           echo "Using version: $VERSION"
+          echo "Using version number: $VERSION_NUMBER"
 
   verify-version:
     name: Verify version matches tag
@@ -197,7 +202,7 @@ jobs:
 
             #### From crates.io
             ```bash
-            cargo install sql-schema
+            cargo install sql-schema@${{ needs.setup.outputs.version_number }}
             ```
 
             #### Binary downloads
