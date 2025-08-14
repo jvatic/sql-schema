@@ -1,0 +1,251 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Run tests
+        run: cargo test --all-features --verbose
+      
+      - name: Run clippy
+        run: cargo clippy --all-features -- -D warnings
+
+  build-binaries:
+    name: Build binaries
+    needs: test
+    strategy:
+      matrix:
+        include:
+          # Linux
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: sql-schema-x86_64-linux
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: sql-schema-aarch64-linux
+          # macOS
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: sql-schema-x86_64-macos
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: sql-schema-aarch64-macos
+          # Windows
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            name: sql-schema-x86_64-windows.exe
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            name: sql-schema-aarch64-windows.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools for aarch64-linux
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build binary
+        run: cargo build --release --target ${{ matrix.target }} --verbose
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Prepare binary
+        shell: bash
+        run: |
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            cp target/${{ matrix.target }}/release/sql-schema.exe ${{ matrix.name }}
+          else
+            cp target/${{ matrix.target }}/release/sql-schema ${{ matrix.name }}
+          fi
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0  # Fetch all history for git-cliff
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        id: git-cliff
+        uses: orhun/git-cliff-action@v3
+        with:
+          config: cliff.toml
+          args: --current --strip all
+        env:
+          OUTPUT: CHANGELOG.md
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./binaries
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ steps.get_version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          body: |
+            ## Changes in ${{ steps.get_version.outputs.VERSION }}
+
+            ${{ steps.git-cliff.outputs.content }}
+
+            ### Installation
+
+            #### From crates.io
+            ```bash
+            cargo install sql-schema
+            ```
+
+            #### Binary downloads
+            Download the appropriate binary for your platform from the assets below.
+
+      - name: Upload Linux x86_64 binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./binaries/sql-schema-x86_64-linux/sql-schema-x86_64-linux
+          asset_name: sql-schema-x86_64-linux
+          asset_content_type: application/octet-stream
+
+      - name: Upload Linux aarch64 binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./binaries/sql-schema-aarch64-linux/sql-schema-aarch64-linux
+          asset_name: sql-schema-aarch64-linux
+          asset_content_type: application/octet-stream
+
+      - name: Upload macOS x86_64 binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./binaries/sql-schema-x86_64-macos/sql-schema-x86_64-macos
+          asset_name: sql-schema-x86_64-macos
+          asset_content_type: application/octet-stream
+
+      - name: Upload macOS aarch64 binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./binaries/sql-schema-aarch64-macos/sql-schema-aarch64-macos
+          asset_name: sql-schema-aarch64-macos
+          asset_content_type: application/octet-stream
+
+      - name: Upload Windows x86_64 binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./binaries/sql-schema-x86_64-windows.exe/sql-schema-x86_64-windows.exe
+          asset_name: sql-schema-x86_64-windows.exe
+          asset_content_type: application/octet-stream
+
+      - name: Upload Windows aarch64 binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./binaries/sql-schema-aarch64-windows.exe/sql-schema-aarch64-windows.exe
+          asset_name: sql-schema-aarch64-windows.exe
+          asset_content_type: application/octet-stream
+
+  publish-crate:
+    name: Publish to crates.io
+    needs: create-release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify version matches tag
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          CARGO_VERSION=$(grep "^version" Cargo.toml | head -1 | cut -d'"' -f2)
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "Error: Tag version ($TAG_VERSION) doesn't match Cargo.toml version ($CARGO_VERSION)"
+            exit 1
+          fi
+          echo "CARGO_VERSION=$CARGO_VERSION" >> $GITHUB_ENV
+
+      - name: Publish to crates.io
+        run: |
+          # Try to publish, but don't fail if the version already exists
+          cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} --verbose || {
+            EXIT_CODE=$?
+            # Check if it failed because the version already exists
+            cargo search sql-schema --limit 1 | grep -q "sql-schema = \"$CARGO_VERSION\"" && {
+              echo "Version $CARGO_VERSION already published on crates.io, skipping..."
+              exit 0
+            }
+            # If it failed for another reason, exit with the original error code
+            exit $EXIT_CODE
+          }
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
