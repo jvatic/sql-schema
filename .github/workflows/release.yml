@@ -296,14 +296,16 @@ jobs:
       - name: Publish to crates.io
         run: |
           # Try to publish, but don't fail if the version already exists
-          cargo publish --verbose || {
+          OUTPUT=$(cargo publish --verbose 2>&1) && echo "$OUTPUT" || {
             EXIT_CODE=$?
+            echo "$OUTPUT"
             # Check if it failed because the version already exists
-            cargo search sql-schema --limit 1 | grep -q "sql-schema = \"$CARGO_VERSION\"" && {
-              echo "Version $CARGO_VERSION already published on crates.io, skipping..."
+            if echo "$OUTPUT" | grep -q "already exists on crates.io"; then
+              echo "✅ Version $CARGO_VERSION already published on crates.io, skipping..."
               exit 0
-            }
+            fi
             # If it failed for another reason, exit with the original error code
+            echo "❌ Publishing failed with error code $EXIT_CODE"
             exit $EXIT_CODE
           }
         env:
