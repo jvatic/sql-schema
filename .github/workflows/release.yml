@@ -4,19 +4,48 @@ on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g., v1.0.0)'
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.get-ref.outputs.ref }}
+      version: ${{ steps.get-ref.outputs.version }}
+    steps:
+      - name: Determine ref and version
+        id: get-ref
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            REF="${{ github.event.inputs.tag }}"
+          else
+            REF="${{ github.ref }}"
+          fi
+          echo "ref=$REF" >> $GITHUB_OUTPUT
+          # Extract version from ref (remove refs/tags/ prefix if present)
+          VERSION="${REF#refs/tags/}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Using ref: $REF"
+          echo "Using version: $VERSION"
+
   test:
     name: Run tests
+    needs: setup
     runs-on: ubuntu-latest
     
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ needs.setup.outputs.ref }}
       
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -29,7 +58,7 @@ jobs:
 
   build-binaries:
     name: Build binaries
-    needs: test
+    needs: [setup, test]
     strategy:
       matrix:
         include:
@@ -60,7 +89,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ needs.setup.outputs.ref }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -95,7 +124,7 @@ jobs:
 
   create-release:
     name: Create GitHub Release
-    needs: build-binaries
+    needs: [setup, build-binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -105,12 +134,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ needs.setup.outputs.ref }}
           fetch-depth: 0  # Fetch all history for git-cliff
-
-      - name: Get version from tag
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Generate changelog
         id: git-cliff
@@ -132,12 +157,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ steps.get_version.outputs.VERSION }}
+          tag_name: ${{ needs.setup.outputs.ref }}
+          release_name: Release ${{ needs.setup.outputs.version }}
           draft: false
           prerelease: false
           body: |
-            ## Changes in ${{ steps.get_version.outputs.VERSION }}
+            ## Changes in ${{ needs.setup.outputs.version }}
 
             ${{ steps.git-cliff.outputs.content }}
 
@@ -213,7 +238,7 @@ jobs:
 
   publish-crate:
     name: Publish to crates.io
-    needs: create-release
+    needs: [setup, create-release]
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -222,7 +247,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ needs.setup.outputs.ref }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
