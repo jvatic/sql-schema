@@ -3,11 +3,11 @@ name: Release
 on:
   push:
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - "v[0-9]+.[0-9]+.[0-9]+"
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g., v1.0.0)'
+        description: "Tag to release (e.g., v1.0.0)"
         required: true
         type: string
 
@@ -41,22 +41,22 @@ jobs:
     name: Verify version matches tag
     needs: setup
     runs-on: ubuntu-latest
-    
+
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.setup.outputs.ref }}
-      
+
       - name: Verify Cargo.toml version matches tag
         run: |
           TAG_VERSION="${{ needs.setup.outputs.version }}"
           # Remove 'v' prefix if present
           TAG_VERSION="${TAG_VERSION#v}"
           CARGO_VERSION=$(grep "^version" Cargo.toml | head -1 | cut -d'"' -f2)
-          
+
           echo "Tag version: $TAG_VERSION"
           echo "Cargo.toml version: $CARGO_VERSION"
-          
+
           if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
             echo "❌ Error: Tag version ($TAG_VERSION) doesn't match Cargo.toml version ($CARGO_VERSION)"
             echo "Please ensure the version in Cargo.toml matches the tag you're trying to release."
@@ -68,18 +68,18 @@ jobs:
     name: Run tests
     needs: [setup, verify-version]
     runs-on: ubuntu-latest
-    
+
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.setup.outputs.ref }}
-      
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      
+
       - name: Run tests
         run: cargo test --all-features --verbose
-      
+
       - name: Run clippy
         run: cargo clippy --all-features -- -D warnings
 
@@ -162,11 +162,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.setup.outputs.ref }}
-          fetch-depth: 0  # Fetch all history for git-cliff
+          fetch-depth: 0 # Fetch all history for git-cliff
 
       - name: Generate changelog
         id: git-cliff
-        uses: orhun/git-cliff-action@v3
+        uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
           args: --current --strip all
@@ -269,7 +269,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: release
     permissions:
-      id-token: write  # Required for OIDC token exchange with crates.io
+      id-token: write # Required for OIDC token exchange with crates.io
 
     steps:
       - uses: actions/checkout@v4
