@@ -159,8 +159,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
 
     steps:
       - uses: actions/checkout@v4
@@ -183,15 +181,10 @@ jobs:
           path: ./binaries
 
       - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.setup.outputs.ref }}
-          release_name: Release ${{ needs.setup.outputs.version }}
-          draft: false
-          prerelease: false
+          tag_name: ${{ needs.setup.outputs.version }}
+          name: Release ${{ needs.setup.outputs.version }}
           body: |
             ## Changes in ${{ needs.setup.outputs.version }}
 
@@ -206,66 +199,13 @@ jobs:
 
             #### Binary downloads
             Download the appropriate binary for your platform from the assets below.
-
-      - name: Upload Linux x86_64 binary
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./binaries/sql-schema-x86_64-linux/sql-schema-x86_64-linux
-          asset_name: sql-schema-x86_64-linux
-          asset_content_type: application/octet-stream
-
-      - name: Upload Linux aarch64 binary
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./binaries/sql-schema-aarch64-linux/sql-schema-aarch64-linux
-          asset_name: sql-schema-aarch64-linux
-          asset_content_type: application/octet-stream
-
-      - name: Upload macOS x86_64 binary
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./binaries/sql-schema-x86_64-macos/sql-schema-x86_64-macos
-          asset_name: sql-schema-x86_64-macos
-          asset_content_type: application/octet-stream
-
-      - name: Upload macOS aarch64 binary
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./binaries/sql-schema-aarch64-macos/sql-schema-aarch64-macos
-          asset_name: sql-schema-aarch64-macos
-          asset_content_type: application/octet-stream
-
-      - name: Upload Windows x86_64 binary
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./binaries/sql-schema-x86_64-windows.exe/sql-schema-x86_64-windows.exe
-          asset_name: sql-schema-x86_64-windows.exe
-          asset_content_type: application/octet-stream
-
-      - name: Upload Windows aarch64 binary
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./binaries/sql-schema-aarch64-windows.exe/sql-schema-aarch64-windows.exe
-          asset_name: sql-schema-aarch64-windows.exe
-          asset_content_type: application/octet-stream
+          files: |
+            ./binaries/sql-schema-x86_64-linux/sql-schema-x86_64-linux
+            ./binaries/sql-schema-aarch64-linux/sql-schema-aarch64-linux
+            ./binaries/sql-schema-x86_64-macos/sql-schema-x86_64-macos
+            ./binaries/sql-schema-aarch64-macos/sql-schema-aarch64-macos
+            ./binaries/sql-schema-x86_64-windows.exe/sql-schema-x86_64-windows.exe
+            ./binaries/sql-schema-aarch64-windows.exe/sql-schema-aarch64-windows.exe
 
   publish-crate:
     name: Publish to crates.io
