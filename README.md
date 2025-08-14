@@ -26,7 +26,7 @@ sql-schema schema \
 
 # generate a migration after editing the schema file
 sql-schema migration \
-    --name my_new_migration \ # default is "generated_migration"
+    --name my_new_migration \ # default is a slug, e.g. `create_users` if you added a table named `users`
     --include-down true \ # default is true if any down migration exists OR if there aren't any
     --schema-path ./schema/schema.sql \ # this is the default value
     --migrations-dir ./schema/migrations # this is the default value
