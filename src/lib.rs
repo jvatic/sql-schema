@@ -207,6 +207,26 @@ mod tests {
                         CREATE TABLE bar (id INT PRIMARY KEY);",
                     expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
                 },
+                TestCase {
+                    dialect: Dialect::Generic,
+                    sql_a: "CREATE TABLE foo(\
+                            id int NOT NULL DEFAULT 0
+                        )",
+                    sql_b: "CREATE TABLE foo(\
+                            id int DEFAULT 0
+                        );",
+                    expect: "ALTER TABLE\n  foo\nALTER COLUMN\n  id DROP NOT NULL;",
+                },
+                TestCase {
+                    dialect: Dialect::Generic,
+                    sql_a: "CREATE TABLE foo(\
+                            id int DEFAULT 0
+                        )",
+                    sql_b: "CREATE TABLE foo(\
+                            id int NOT NULL DEFAULT 0
+                        );",
+                    expect: "ALTER TABLE\n  foo\nALTER COLUMN\n  id\nSET\n  NOT NULL;",
+                },
             ],
             |ast_a, ast_b| ast_a.diff(&ast_b),
         );

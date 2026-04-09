@@ -1,11 +1,15 @@
-use std::{cmp::Ordering, collections::HashSet, fmt};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 use bon::bon;
 use sqlparser::ast::{
-    helpers::attached_token::AttachedToken, AlterTable, AlterTableOperation, AlterType,
-    AlterTypeAddValue, AlterTypeAddValuePosition, AlterTypeOperation, CreateDomain,
-    CreateExtension, CreateIndex, CreateTable, DropDomain, DropExtension, Ident, ObjectName,
-    ObjectType, Statement, UserDefinedTypeRepresentation,
+    helpers::attached_token::AttachedToken, AlterColumnOperation, AlterTable, AlterTableOperation,
+    AlterType, AlterTypeAddValue, AlterTypeAddValuePosition, AlterTypeOperation, ColumnOption,
+    ColumnOptionDef, CreateDomain, CreateExtension, CreateIndex, CreateTable, DropDomain,
+    DropExtension, Ident, ObjectName, ObjectType, Statement, UserDefinedTypeRepresentation,
 };
 use thiserror::Error;
 
@@ -342,38 +346,129 @@ fn compare_create_table(a: &CreateTable, b: &CreateTable) -> Option<Vec<Statemen
         return None;
     }
 
-    let a_column_names: HashSet<_> = a.columns.iter().map(|c| c.name.value.clone()).collect();
-    let b_column_names: HashSet<_> = b.columns.iter().map(|c| c.name.value.clone()).collect();
+    let a_columns: HashMap<_, _> = a
+        .columns
+        .iter()
+        .map(|c| (c.name.value.clone(), c))
+        .collect();
+    let b_columns: HashMap<_, _> = b
+        .columns
+        .iter()
+        .map(|c| (c.name.value.clone(), c))
+        .collect();
+
+    fn remove_column_option(op: &ColumnOptionDef) -> AlterColumnOperation {
+        match &op.option {
+            ColumnOption::NotNull => AlterColumnOperation::DropNotNull,
+            ColumnOption::Default(_) => AlterColumnOperation::DropDefault,
+            _ => todo!("remove column option not supported for {op:?}"),
+        }
+    }
+
+    fn add_column_option(op: &ColumnOptionDef) -> AlterColumnOperation {
+        match &op.option {
+            ColumnOption::NotNull => AlterColumnOperation::SetNotNull,
+            ColumnOption::Default(expr) => AlterColumnOperation::SetDefault {
+                value: expr.clone(),
+            },
+            _ => todo!("add column option not supported for {op:?}"),
+        }
+    }
+
+    fn compare_column_options(
+        oa: &[ColumnOptionDef],
+        ob: &[ColumnOptionDef],
+    ) -> Vec<AlterColumnOperation> {
+        let obs: HashSet<_> = ob.iter().cloned().collect();
+        let oas: HashSet<_> = oa.iter().cloned().collect();
+        let mut ops = Vec::with_capacity(oa.len() + ob.len());
+
+        for aop in oa {
+            match obs.get(aop) {
+                Some(bop) if aop == bop => {}
+                Some(bop) => {
+                    // column option has changed
+                    ops.push(remove_column_option(aop));
+                    ops.push(add_column_option(bop));
+                }
+                None => {
+                    // column option has been removed
+                    ops.push(remove_column_option(aop));
+                }
+            }
+        }
+
+        for bop in ob {
+            match oas.get(bop) {
+                Some(_) => {
+                    // column option has changed, covered above
+                }
+                None => {
+                    // column option has been added
+                    ops.push(add_column_option(bop));
+                }
+            }
+        }
+
+        ops
+    }
 
     let operations: Vec<_> = a
         .columns
         .iter()
         .filter_map(|ac| {
-            if b_column_names.contains(&ac.name.value) {
-                None
-            } else {
-                // drop column if it only exists in `a`
-                Some(AlterTableOperation::DropColumn {
+            match b_columns.get(&ac.name.value) {
+                // nothing has changed
+                Some(bc) if ac.data_type == bc.data_type && ac.options == bc.options => None,
+                // data type and/or options have changed
+                Some(bc) => {
+                    let mut ops = Vec::new();
+
+                    if ac.data_type != bc.data_type {
+                        ops.push(AlterTableOperation::AlterColumn {
+                            column_name: bc.name.clone(),
+                            op: AlterColumnOperation::SetDataType {
+                                data_type: bc.data_type.clone(),
+                                using: None,
+                                had_set: true,
+                            },
+                        });
+                    }
+
+                    ops.extend(
+                        compare_column_options(&ac.options, &bc.options)
+                            .into_iter()
+                            .map(|op| AlterTableOperation::AlterColumn {
+                                column_name: bc.name.clone(),
+                                op: op,
+                            }),
+                    );
+
+                    Some(ops)
+                }
+                // column only exists in `a`
+                None => Some(vec![AlterTableOperation::DropColumn {
                     column_names: vec![ac.name.clone()],
                     if_exists: a.if_not_exists,
                     drop_behavior: None,
                     has_column_keyword: true,
-                })
+                }]),
             }
         })
         .chain(b.columns.iter().filter_map(|bc| {
-            if a_column_names.contains(&bc.name.value) {
-                None
-            } else {
-                // add the column if it only exists in `b`
-                Some(AlterTableOperation::AddColumn {
+            match a_columns.get(&bc.name.value) {
+                // data type and/or options have changed, so it's handled above
+                Some(_) => None,
+                // column only exists in `b`
+                None => Some(vec![AlterTableOperation::AddColumn {
                     column_keyword: true,
                     if_not_exists: a.if_not_exists,
                     column_def: bc.clone(),
                     column_position: None,
-                })
+                }]),
             }
         }))
+        .flatten()
         .collect();
 
     if operations.is_empty() {
@@ -383,7 +478,7 @@ fn compare_create_table(a: &CreateTable, b: &CreateTable) -> Option<Vec<Statemen
     Some(vec![Statement::AlterTable(AlterTable {
         table_type: None,
         name: a.name.clone(),
-        if_exists: a.if_not_exists,
+        if_exists: false,
         only: false,
         operations,
         location: None,
