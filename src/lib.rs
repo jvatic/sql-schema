@@ -430,6 +430,19 @@ mod tests {
     }
 
     #[test]
+    fn apply_alter_table_drop_columns_snowflake() {
+        run_test_cases(
+            vec![TestCase {
+                dialect: Dialect::Snowflake,
+                sql_a: "CREATE TABLE bar (foo TEXT, bar TEXT, id INT PRIMARY KEY)",
+                sql_b: "ALTER TABLE bar DROP COLUMN foo, bar",
+                expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
+            }],
+            |ast_a, ast_b| ast_a.migrate(&ast_b),
+        );
+    }
+
+    #[test]
     fn apply_alter_table_alter_column() {
         run_test_cases(
             vec![

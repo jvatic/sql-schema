@@ -2,9 +2,9 @@ use std::fmt;
 
 use bon::bon;
 use sqlparser::ast::{
-    AlterColumnOperation, AlterTableOperation, AlterType, AlterTypeAddValuePosition,
-    AlterTypeOperation, ColumnOption, ColumnOptionDef, CreateTable, GeneratedAs, ObjectName,
-    ObjectNamePart, ObjectType, Statement, UserDefinedTypeRepresentation,
+    AlterColumnOperation, AlterTable, AlterTableOperation, AlterType, AlterTypeAddValuePosition,
+    AlterTypeOperation, ColumnOption, ColumnOptionDef, CreateExtension, CreateTable, DropExtension,
+    GeneratedAs, ObjectName, ObjectNamePart, ObjectType, Statement, UserDefinedTypeRepresentation,
 };
 use thiserror::Error;
 
@@ -76,7 +76,7 @@ impl Migrate for Vec<Statement> {
                     Statement::CreateTable(ca) => other
                         .iter()
                         .find(|sb| match sb {
-                            Statement::AlterTable { name, .. } => *name == ca.name,
+                            Statement::AlterTable(AlterTable { name, .. }) => *name == ca.name,
                             Statement::Drop {
                                 object_type, names, ..
                             } => {
@@ -114,10 +114,12 @@ impl Migrate for Vec<Statement> {
                             _ => false,
                         })
                         .map_or(Some(Ok(orig)), |sb| sa.migrate(sb).transpose()),
-                    Statement::CreateExtension { name, .. } => other
+                    Statement::CreateExtension(CreateExtension { name, .. }) => other
                         .iter()
                         .find(|sb| match sb {
-                            Statement::DropExtension { names, .. } => names.contains(name),
+                            Statement::DropExtension(DropExtension { names, .. }) => {
+                                names.contains(name)
+                            }
                             _ => false,
                         })
                         .map_or(Some(Ok(orig)), |sb| sa.migrate(sb).transpose()),
@@ -152,9 +154,9 @@ impl Migrate for Statement {
     fn migrate(self, other: &Self) -> Result<Option<Self>, MigrateError> {
         match self {
             Self::CreateTable(ca) => match other {
-                Self::AlterTable {
+                Self::AlterTable(AlterTable {
                     name, operations, ..
-                } => {
+                }) => {
                     if *name == ca.name {
                         Ok(Some(Self::CreateTable(migrate_alter_table(
                             ca, operations,
@@ -264,8 +266,11 @@ fn migrate_alter_table(
             AlterTableOperation::AddColumn { column_def, .. } => {
                 t.columns.push(column_def.clone());
             }
-            AlterTableOperation::DropColumn { column_name, .. } => {
-                t.columns.retain(|c| c.name.value != *column_name.value);
+            AlterTableOperation::DropColumn { column_names, .. } => {
+                t.columns.retain(|c| {
+                    !column_names
+                        .iter().any(|name| c.name.value == name.value)
+                });
             }
             AlterTableOperation::AlterColumn { column_name, op } => {
                 t.columns.iter_mut().for_each(|c| {
@@ -297,7 +302,8 @@ fn migrate_alter_table(
                         }
                         AlterColumnOperation::SetDataType {
                             data_type,
-                            using: _, // not applicable since we're not running the query
+                            using: _,   // not applicable since we're not running the query
+                            had_set: _, // this doesn't change the meaning
                         } => {
                             c.data_type = data_type.clone();
                         }
@@ -310,8 +316,7 @@ fn migrate_alter_table(
                             c.options.push(ColumnOptionDef {
                                 name: None,
                                 option: ColumnOption::Generated {
-                                    generated_as: generated_as
-                                        .clone()
+                                    generated_as: (*generated_as)
                                         .unwrap_or(GeneratedAs::Always),
                                     sequence_options: sequence_options.clone(),
                                     generation_expr: None,
@@ -339,9 +344,9 @@ fn migrate_alter_table(
 
 fn migrate_alter_type(
     name: ObjectName,
-    representation: UserDefinedTypeRepresentation,
+    representation: Option<UserDefinedTypeRepresentation>,
     other: &AlterType,
-) -> Result<(ObjectName, UserDefinedTypeRepresentation), MigrateError> {
+) -> Result<(ObjectName, Option<UserDefinedTypeRepresentation>), MigrateError> {
     match &other.operation {
         AlterTypeOperation::Rename(r) => {
             let mut parts = name.0;
@@ -352,7 +357,7 @@ fn migrate_alter_type(
             Ok((name, representation))
         }
         AlterTypeOperation::AddValue(a) => match representation {
-            UserDefinedTypeRepresentation::Enum { mut labels } => {
+            Some(UserDefinedTypeRepresentation::Enum { mut labels }) => {
                 match &a.position {
                     Some(AlterTypeAddValuePosition::Before(before_name)) => {
                         let index = labels
@@ -379,9 +384,9 @@ fn migrate_alter_type(
                     None => labels.push(a.value.clone()),
                 }
 
-                Ok((name, UserDefinedTypeRepresentation::Enum { labels }))
+                Ok((name, Some(UserDefinedTypeRepresentation::Enum { labels })))
             }
-            UserDefinedTypeRepresentation::Composite { .. } => Err(MigrateError::builder()
+            Some(_) | None => Err(MigrateError::builder()
                 .kind(MigrateErrorKind::AlterTypeInvalidOp(Box::new(
                     other.operation.clone(),
                 )))
@@ -393,15 +398,15 @@ fn migrate_alter_type(
                 .build()),
         },
         AlterTypeOperation::RenameValue(rv) => match representation {
-            UserDefinedTypeRepresentation::Enum { labels } => {
+            Some(UserDefinedTypeRepresentation::Enum { labels }) => {
                 let labels = labels
                     .into_iter()
                     .map(|l| if l == rv.from { rv.to.clone() } else { l })
                     .collect::<Vec<_>>();
 
-                Ok((name, UserDefinedTypeRepresentation::Enum { labels }))
+                Ok((name, Some(UserDefinedTypeRepresentation::Enum { labels })))
             }
-            UserDefinedTypeRepresentation::Composite { .. } => Err(MigrateError::builder()
+            Some(_) | None => Err(MigrateError::builder()
                 .kind(MigrateErrorKind::AlterTypeInvalidOp(Box::new(
                     other.operation.clone(),
                 )))
