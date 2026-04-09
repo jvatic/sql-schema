@@ -173,17 +173,41 @@ mod tests {
     #[test]
     fn diff_create_table() {
         run_test_cases(
-            vec![TestCase {
-                dialect: Dialect::Generic,
-                sql_a: "CREATE TABLE foo(\
+            vec![
+                TestCase {
+                    dialect: Dialect::Generic,
+                    sql_a: "CREATE TABLE foo(\
                             id int PRIMARY KEY
                         )",
-                sql_b: "CREATE TABLE foo(\
+                    sql_b: "CREATE TABLE foo(\
                             id int PRIMARY KEY
                         );\
                         CREATE TABLE bar (id INT PRIMARY KEY);",
-                expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
-            }],
+                    expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
+                },
+                TestCase {
+                    dialect: Dialect::Generic,
+                    sql_a: "CREATE TABLE foo(\
+                            id int PRIMARY KEY
+                        )",
+                    sql_b: "CREATE TABLE foo(\
+                            \"id\" int PRIMARY KEY
+                        );\
+                        CREATE TABLE bar (id INT PRIMARY KEY);",
+                    expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
+                },
+                TestCase {
+                    dialect: Dialect::Generic,
+                    sql_a: "CREATE TABLE foo(\
+                            \"id\" int PRIMARY KEY
+                        )",
+                    sql_b: "CREATE TABLE foo(\
+                            id int PRIMARY KEY
+                        );\
+                        CREATE TABLE bar (id INT PRIMARY KEY);",
+                    expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
+                },
+            ],
             |ast_a, ast_b| ast_a.diff(&ast_b),
         );
     }

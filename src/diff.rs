@@ -339,14 +339,14 @@ fn compare_create_table(a: &CreateTable, b: &CreateTable) -> Option<Vec<Statemen
         return None;
     }
 
-    let a_column_names: HashSet<_> = a.columns.iter().map(|c| c.name.clone()).collect();
-    let b_column_names: HashSet<_> = b.columns.iter().map(|c| c.name.clone()).collect();
+    let a_column_names: HashSet<_> = a.columns.iter().map(|c| c.name.value.clone()).collect();
+    let b_column_names: HashSet<_> = b.columns.iter().map(|c| c.name.value.clone()).collect();
 
     let operations: Vec<_> = a
         .columns
         .iter()
         .filter_map(|ac| {
-            if b_column_names.contains(&ac.name) {
+            if b_column_names.contains(&ac.name.value) {
                 None
             } else {
                 // drop column if it only exists in `a`
@@ -359,7 +359,7 @@ fn compare_create_table(a: &CreateTable, b: &CreateTable) -> Option<Vec<Statemen
             }
         })
         .chain(b.columns.iter().filter_map(|bc| {
-            if a_column_names.contains(&bc.name) {
+            if a_column_names.contains(&bc.name.value) {
                 None
             } else {
                 // add the column if it only exists in `b`
