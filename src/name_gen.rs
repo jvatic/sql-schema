@@ -1,6 +1,6 @@
 use sqlparser::ast::{
-    AlterTableOperation, AlterType, ColumnDef, CreateIndex, CreateTable, ObjectName, ObjectType,
-    Statement,
+    AlterTable, AlterTableOperation, AlterType, ColumnDef, CreateIndex, CreateTable, ObjectName,
+    ObjectType, RenameTableNameKind, Statement,
 };
 
 use crate::SyntaxTree;
@@ -15,9 +15,9 @@ pub fn generate_name(
         .iter()
         .filter_map(|s| match s {
             Statement::CreateTable(CreateTable { name, .. }) => Some(format!("create_{name}")),
-            Statement::AlterTable {
+            Statement::AlterTable(AlterTable {
                 name, operations, ..
-            } => alter_table_name(name, operations),
+            }) => alter_table_name(name, operations),
             Statement::Drop {
                 object_type, names, ..
             } => {
@@ -73,9 +73,14 @@ fn alter_table_name(name: &ObjectName, operations: &[AlterTableOperation]) -> Op
                 column_def: ColumnDef { name, .. },
                 ..
             } => Some(format!("add_{name}")),
-            AlterTableOperation::DropColumn { column_name, .. } => {
-                Some(format!("drop_{column_name}"))
-            }
+            AlterTableOperation::DropColumn { column_names, .. } => Some(format!(
+                "drop_{}",
+                column_names
+                    .iter()
+                    .map(|ident| ident.value.clone())
+                    .collect::<Vec<_>>()
+                    .join("_")
+            )),
             AlterTableOperation::RenameColumn {
                 old_column_name,
                 new_column_name,
@@ -85,7 +90,13 @@ fn alter_table_name(name: &ObjectName, operations: &[AlterTableOperation]) -> Op
             }
             AlterTableOperation::RenameTable { table_name } => {
                 table_verb = "rename";
-                Some(format!("to_{table_name}"))
+                Some(format!(
+                    "to_{table_name}",
+                    table_name = match table_name {
+                        RenameTableNameKind::As(name) => name,
+                        RenameTableNameKind::To(name) => name,
+                    }
+                ))
             }
             _ => None,
         })

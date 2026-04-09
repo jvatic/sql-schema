@@ -2,8 +2,9 @@ use std::{cmp::Ordering, collections::HashSet, fmt};
 
 use bon::bon;
 use sqlparser::ast::{
-    AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
-    AlterTypeOperation, CreateDomain, CreateIndex, CreateTable, DropDomain, Ident, ObjectName,
+    helpers::attached_token::AttachedToken, AlterTable, AlterTableOperation, AlterType,
+    AlterTypeAddValue, AlterTypeAddValuePosition, AlterTypeOperation, CreateDomain,
+    CreateExtension, CreateIndex, CreateTable, DropDomain, DropExtension, Ident, ObjectName,
     ObjectType, Statement, UserDefinedTypeRepresentation,
 };
 use thiserror::Error;
@@ -82,12 +83,12 @@ impl Diff for Vec<Statement> {
                     Statement::CreateType { name, .. } => {
                         find_and_compare_create_type(sa, name, other)
                     }
-                    Statement::CreateExtension {
+                    Statement::CreateExtension(CreateExtension {
                         name,
                         if_not_exists,
                         cascade,
                         ..
-                    } => {
+                    }) => {
                         find_and_compare_create_extension(sa, name, *if_not_exists, *cascade, other)
                     }
                     Statement::CreateDomain(a) => find_and_compare_create_domain(sa, a, other),
@@ -115,9 +116,11 @@ impl Diff for Vec<Statement> {
                             _ => false,
                         }))
                     }
-                    Statement::CreateExtension { name: b_name, .. } => {
+                    Statement::CreateExtension(CreateExtension { name: b_name, .. }) => {
                         Ok(self.iter().find(|sa| match sa {
-                            Statement::CreateExtension { name: a_name, .. } => a_name == b_name,
+                            Statement::CreateExtension(CreateExtension {
+                                name: a_name, ..
+                            }) => a_name == b_name,
                             _ => false,
                         }))
                     }
@@ -264,11 +267,11 @@ fn find_and_compare_create_extension(
         sa,
         other,
         |sb| match sb {
-            Statement::CreateExtension { name: b_name, .. } => a_name == b_name,
+            Statement::CreateExtension(CreateExtension { name: b_name, .. }) => a_name == b_name,
             _ => false,
         },
         || {
-            Ok(Some(vec![Statement::DropExtension {
+            Ok(Some(vec![Statement::DropExtension(DropExtension {
                 names: vec![a_name.clone()],
                 if_exists: if_not_exists,
                 cascade_or_restrict: if cascade {
@@ -276,7 +279,7 @@ fn find_and_compare_create_extension(
                 } else {
                     None
                 },
-            }]))
+            })]))
         },
     )
 }
@@ -351,7 +354,7 @@ fn compare_create_table(a: &CreateTable, b: &CreateTable) -> Option<Vec<Statemen
             } else {
                 // drop column if it only exists in `a`
                 Some(AlterTableOperation::DropColumn {
-                    column_name: ac.name.clone(),
+                    column_names: vec![ac.name.clone()],
                     if_exists: a.if_not_exists,
                     drop_behavior: None,
                     has_column_keyword: true,
@@ -377,15 +380,16 @@ fn compare_create_table(a: &CreateTable, b: &CreateTable) -> Option<Vec<Statemen
         return None;
     }
 
-    Some(vec![Statement::AlterTable {
+    Some(vec![Statement::AlterTable(AlterTable {
+        table_type: None,
         name: a.name.clone(),
         if_exists: a.if_not_exists,
         only: false,
         operations,
         location: None,
         on_cluster: a.on_cluster.clone(),
-        iceberg: false,
-    }])
+        end_token: AttachedToken::empty(),
+    })])
 }
 
 fn compare_create_index(
@@ -423,18 +427,18 @@ fn compare_create_index(
 fn compare_create_type(
     a: &Statement,
     a_name: &ObjectName,
-    a_rep: &UserDefinedTypeRepresentation,
+    a_rep: &Option<UserDefinedTypeRepresentation>,
     b: &Statement,
     b_name: &ObjectName,
-    b_rep: &UserDefinedTypeRepresentation,
+    b_rep: &Option<UserDefinedTypeRepresentation>,
 ) -> Result<Option<Vec<Statement>>, DiffError> {
     if a_name == b_name && a_rep == b_rep {
         return Ok(None);
     }
 
     let operations = match a_rep {
-        UserDefinedTypeRepresentation::Enum { labels: a_labels } => match b_rep {
-            UserDefinedTypeRepresentation::Enum { labels: b_labels } => {
+        Some(UserDefinedTypeRepresentation::Enum { labels: a_labels }) => match b_rep {
+            Some(UserDefinedTypeRepresentation::Enum { labels: b_labels }) => {
                 match a_labels.len().cmp(&b_labels.len()) {
                     Ordering::Equal => {
                         let rename_labels: Vec<_> = a_labels
