@@ -342,7 +342,7 @@ fn compare_create_table(a: &CreateTable, b: &CreateTable) -> Option<Vec<Statemen
     let a_column_names: HashSet<_> = a.columns.iter().map(|c| c.name.clone()).collect();
     let b_column_names: HashSet<_> = b.columns.iter().map(|c| c.name.clone()).collect();
 
-    let ops = a
+    let operations: Vec<_> = a
         .columns
         .iter()
         .filter_map(|ac| {
@@ -373,11 +373,15 @@ fn compare_create_table(a: &CreateTable, b: &CreateTable) -> Option<Vec<Statemen
         }))
         .collect();
 
+    if operations.is_empty() {
+        return None;
+    }
+
     Some(vec![Statement::AlterTable {
         name: a.name.clone(),
         if_exists: a.if_not_exists,
         only: false,
-        operations: ops,
+        operations,
         location: None,
         on_cluster: a.on_cluster.clone(),
         iceberg: false,
