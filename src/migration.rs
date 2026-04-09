@@ -265,7 +265,7 @@ fn migrate_alter_table(
                 t.columns.push(column_def.clone());
             }
             AlterTableOperation::DropColumn { column_name, .. } => {
-                t.columns.retain(|c| c.name != *column_name);
+                t.columns.retain(|c| c.name.value != *column_name.value);
             }
             AlterTableOperation::AlterColumn { column_name, op } => {
                 t.columns.iter_mut().for_each(|c| {
