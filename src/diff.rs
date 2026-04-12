@@ -36,10 +36,10 @@ impl fmt::Display for DiffError {
 #[bon]
 impl DiffError {
     #[builder]
-    fn new(
+    pub(crate) fn new(
         kind: DiffErrorKind,
-        statement_a: Option<Statement>,
-        statement_b: Option<Statement>,
+        #[builder(into)] statement_a: Option<Statement>,
+        #[builder(into)] statement_b: Option<Statement>,
     ) -> Self {
         Self {
             kind,
@@ -51,7 +51,7 @@ impl DiffError {
 
 #[derive(Error, Debug)]
 #[non_exhaustive]
-enum DiffErrorKind {
+pub enum DiffErrorKind {
     #[error("can't drop unnamed index")]
     DropUnnamedIndex,
     #[error("can't compare unnamed index")]
@@ -62,16 +62,18 @@ enum DiffErrorKind {
     NotImplemented,
 }
 
+pub type Result<T, E = DiffError> = std::result::Result<T, E>;
+
 pub(crate) trait Diff: Sized {
     type Diff;
 
-    fn diff(&self, other: &Self) -> Result<Self::Diff, DiffError>;
+    fn diff(&self, other: &Self) -> Result<Self::Diff>;
 }
 
 impl Diff for Vec<Statement> {
     type Diff = Option<Vec<Statement>>;
 
-    fn diff(&self, other: &Self) -> Result<Self::Diff, DiffError> {
+    fn diff(&self, other: &Self) -> Result<Self::Diff> {
         let res = self
             .iter()
             .filter_map(|sa| {
@@ -155,10 +157,10 @@ fn find_and_compare<MF, DF>(
     other: &[Statement],
     match_fn: MF,
     drop_fn: DF,
-) -> Result<Option<Vec<Statement>>, DiffError>
+) -> Result<Option<Vec<Statement>>>
 where
     MF: Fn(&&Statement) -> bool,
-    DF: Fn() -> Result<Option<Vec<Statement>>, DiffError>,
+    DF: Fn() -> Result<Option<Vec<Statement>>>,
 {
     other.iter().find(match_fn).map_or_else(
         // drop the statement if it wasn't found in `other`
@@ -172,7 +174,7 @@ fn find_and_compare_create_table(
     sa: &Statement,
     a: &CreateTable,
     other: &[Statement],
-) -> Result<Option<Vec<Statement>>, DiffError> {
+) -> Result<Option<Vec<Statement>>> {
     find_and_compare(
         sa,
         other,
@@ -199,7 +201,7 @@ fn find_and_compare_create_index(
     sa: &Statement,
     a: &CreateIndex,
     other: &[Statement],
-) -> Result<Option<Vec<Statement>>, DiffError> {
+) -> Result<Option<Vec<Statement>>> {
     find_and_compare(
         sa,
         other,
@@ -233,7 +235,7 @@ fn find_and_compare_create_type(
     sa: &Statement,
     a_name: &ObjectName,
     other: &[Statement],
-) -> Result<Option<Vec<Statement>>, DiffError> {
+) -> Result<Option<Vec<Statement>>> {
     find_and_compare(
         sa,
         other,
@@ -262,7 +264,7 @@ fn find_and_compare_create_extension(
     if_not_exists: bool,
     cascade: bool,
     other: &[Statement],
-) -> Result<Option<Vec<Statement>>, DiffError> {
+) -> Result<Option<Vec<Statement>>> {
     find_and_compare(
         sa,
         other,
@@ -288,7 +290,7 @@ fn find_and_compare_create_domain(
     orig: &Statement,
     domain: &CreateDomain,
     other: &[Statement],
-) -> Result<Option<Vec<Statement>>, DiffError> {
+) -> Result<Option<Vec<Statement>>> {
     let res = other
         .iter()
         .find(|sb| match sb {
@@ -304,7 +306,7 @@ fn find_and_compare_create_domain(
 impl Diff for Statement {
     type Diff = Option<Vec<Statement>>;
 
-    fn diff(&self, other: &Self) -> Result<Self::Diff, DiffError> {
+    fn diff(&self, other: &Self) -> Result<Self::Diff> {
         match self {
             Self::CreateTable(a) => match other {
                 Self::CreateTable(b) => Ok(compare_create_table(a, b)),
@@ -392,10 +394,7 @@ fn compare_create_table(a: &CreateTable, b: &CreateTable) -> Option<Vec<Statemen
     })])
 }
 
-fn compare_create_index(
-    a: &CreateIndex,
-    b: &CreateIndex,
-) -> Result<Option<Vec<Statement>>, DiffError> {
+fn compare_create_index(a: &CreateIndex, b: &CreateIndex) -> Result<Option<Vec<Statement>>> {
     if a == b {
         return Ok(None);
     }
@@ -431,7 +430,7 @@ fn compare_create_type(
     b: &Statement,
     b_name: &ObjectName,
     b_rep: &Option<UserDefinedTypeRepresentation>,
-) -> Result<Option<Vec<Statement>>, DiffError> {
+) -> Result<Option<Vec<Statement>>> {
     if a_name == b_name && a_rep == b_rep {
         return Ok(None);
     }
