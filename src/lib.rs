@@ -1,15 +1,17 @@
 use std::fmt;
 
 use bon::bon;
-use diff::Diff;
-use migration::Migrate;
 use sqlparser::{
-    ast::Statement,
     dialect::{self},
     parser::{self, Parser},
 };
 use thiserror::Error;
 
+use ast::Statement;
+use diff::Diff;
+use migration::Migrate;
+
+mod ast;
 mod diff;
 mod migration;
 pub mod name_gen;

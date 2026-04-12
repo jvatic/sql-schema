@@ -1,12 +1,13 @@
 use std::fmt;
 
 use bon::bon;
-use sqlparser::ast::{
+use thiserror::Error;
+
+use crate::ast::{
     AlterColumnOperation, AlterTable, AlterTableOperation, AlterType, AlterTypeAddValuePosition,
     AlterTypeOperation, ColumnOption, ColumnOptionDef, CreateExtension, CreateTable, DropExtension,
     GeneratedAs, ObjectName, ObjectNamePart, ObjectType, Statement, UserDefinedTypeRepresentation,
 };
-use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub struct MigrateError {
@@ -267,10 +268,8 @@ fn migrate_alter_table(
                 t.columns.push(column_def.clone());
             }
             AlterTableOperation::DropColumn { column_names, .. } => {
-                t.columns.retain(|c| {
-                    !column_names
-                        .iter().any(|name| c.name.value == name.value)
-                });
+                t.columns
+                    .retain(|c| !column_names.iter().any(|name| c.name.value == name.value));
             }
             AlterTableOperation::AlterColumn { column_name, op } => {
                 t.columns.iter_mut().for_each(|c| {
@@ -316,8 +315,7 @@ fn migrate_alter_table(
                             c.options.push(ColumnOptionDef {
                                 name: None,
                                 option: ColumnOption::Generated {
-                                    generated_as: (*generated_as)
-                                        .unwrap_or(GeneratedAs::Always),
+                                    generated_as: (*generated_as).unwrap_or(GeneratedAs::Always),
                                     sequence_options: sequence_options.clone(),
                                     generation_expr: None,
                                     generation_expr_mode: None,

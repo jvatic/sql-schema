@@ -1,9 +1,10 @@
-use sqlparser::ast::{
-    AlterTable, AlterTableOperation, AlterType, ColumnDef, CreateIndex, CreateTable, ObjectName,
-    ObjectType, RenameTableNameKind, Statement,
+use crate::{
+    ast::{
+        AlterTable, AlterTableOperation, AlterType, ColumnDef, CreateIndex, CreateTable,
+        ObjectName, ObjectType, RenameTableNameKind, Statement,
+    },
+    SyntaxTree,
 };
-
-use crate::SyntaxTree;
 
 #[bon::builder(finish_fn = build)]
 pub fn generate_name(

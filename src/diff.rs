@@ -1,13 +1,14 @@
 use std::{cmp::Ordering, collections::HashSet, fmt};
 
 use bon::bon;
-use sqlparser::ast::{
-    helpers::attached_token::AttachedToken, AlterTable, AlterTableOperation, AlterType,
-    AlterTypeAddValue, AlterTypeAddValuePosition, AlterTypeOperation, CreateDomain,
-    CreateExtension, CreateIndex, CreateTable, DropDomain, DropExtension, Ident, ObjectName,
-    ObjectType, Statement, UserDefinedTypeRepresentation,
-};
 use thiserror::Error;
+
+use crate::ast::{
+    AlterTable, AlterTableOperation, AlterType, AlterTypeAddValue, AlterTypeAddValuePosition,
+    AlterTypeOperation, AttachedToken, CreateDomain, CreateExtension, CreateIndex, CreateTable,
+    DropDomain, DropExtension, Ident, ObjectName, ObjectType, Statement,
+    UserDefinedTypeRepresentation,
+};
 
 #[derive(Error, Debug)]
 pub struct DiffError {
@@ -184,7 +185,7 @@ fn find_and_compare_create_table(
         },
         || {
             Ok(Some(vec![Statement::Drop {
-                object_type: sqlparser::ast::ObjectType::Table,
+                object_type: crate::ast::ObjectType::Table,
                 if_exists: a.if_not_exists,
                 names: vec![a.name.clone()],
                 cascade: false,
@@ -218,7 +219,7 @@ fn find_and_compare_create_index(
             })?;
 
             Ok(Some(vec![Statement::Drop {
-                object_type: sqlparser::ast::ObjectType::Index,
+                object_type: crate::ast::ObjectType::Index,
                 if_exists: a.if_not_exists,
                 names: vec![name],
                 cascade: false,
@@ -245,7 +246,7 @@ fn find_and_compare_create_type(
         },
         || {
             Ok(Some(vec![Statement::Drop {
-                object_type: sqlparser::ast::ObjectType::Type,
+                object_type: crate::ast::ObjectType::Type,
                 if_exists: false,
                 names: vec![a_name.clone()],
                 cascade: false,
@@ -277,7 +278,7 @@ fn find_and_compare_create_extension(
                 names: vec![a_name.clone()],
                 if_exists: if_not_exists,
                 cascade_or_restrict: if cascade {
-                    Some(sqlparser::ast::ReferentialAction::Cascade)
+                    Some(crate::ast::ReferentialAction::Cascade)
                 } else {
                     None
                 },
@@ -448,7 +449,7 @@ fn compare_create_type(
                                     None
                                 } else {
                                     Some(AlterTypeOperation::RenameValue(
-                                        sqlparser::ast::AlterTypeRenameValue {
+                                        crate::ast::AlterTypeRenameValue {
                                             from: a.clone(),
                                             to: b.clone(),
                                         },
