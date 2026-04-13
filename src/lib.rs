@@ -25,37 +25,17 @@ pub struct ParseError(#[from] parser::ParserError);
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum), clap(rename_all = "lower"))]
 #[non_exhaustive]
 pub enum Dialect {
-    Ansi,
-    BigQuery,
-    ClickHouse,
-    Databricks,
-    DuckDb,
     #[default]
     Generic,
-    Hive,
-    MsSql,
-    MySql,
     PostgreSql,
-    RedshiftSql,
-    Snowflake,
     SQLite,
 }
 
 impl Dialect {
     fn to_sqlparser_dialect(self) -> Box<dyn dialect::Dialect> {
         match self {
-            Self::Ansi => Box::new(dialect::AnsiDialect {}),
-            Self::BigQuery => Box::new(dialect::BigQueryDialect {}),
-            Self::ClickHouse => Box::new(dialect::ClickHouseDialect {}),
-            Self::Databricks => Box::new(dialect::DatabricksDialect {}),
-            Self::DuckDb => Box::new(dialect::DuckDbDialect {}),
             Self::Generic => Box::new(dialect::GenericDialect {}),
-            Self::Hive => Box::new(dialect::HiveDialect {}),
-            Self::MsSql => Box::new(dialect::MsSqlDialect {}),
-            Self::MySql => Box::new(dialect::MySqlDialect {}),
             Self::PostgreSql => Box::new(dialect::PostgreSqlDialect {}),
-            Self::RedshiftSql => Box::new(dialect::RedshiftSqlDialect {}),
-            Self::Snowflake => Box::new(dialect::SnowflakeDialect {}),
             Self::SQLite => Box::new(dialect::SQLiteDialect {}),
         }
     }
@@ -488,20 +468,6 @@ mod tests {
                 sql_a: "CREATE DOMAIN positive_int AS INTEGER CHECK (VALUE > 0);",
                 sql_b: "CREATE DOMAIN email AS VARCHAR(255) CHECK (VALUE ~ '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$');",
                 expect: "CREATE DOMAIN positive_int AS INTEGER CHECK (VALUE > 0);\n\nCREATE DOMAIN email AS VARCHAR(255) CHECK (\n  VALUE ~ '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'\n);",
-            },
-
-            => |ast_a, ast_b| {
-                ast_a.migrate(&ast_b)
-            }
-        );
-
-        test_case!(
-            @dialect(Dialect::Snowflake)
-
-            alter_table_drop_columns {
-                sql_a: "CREATE TABLE bar (foo TEXT, bar TEXT, id INT PRIMARY KEY)",
-                sql_b: "ALTER TABLE bar DROP COLUMN foo, bar",
-                expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
             },
 
             => |ast_a, ast_b| {
