@@ -7,12 +7,12 @@ use crate::{
 };
 
 #[bon::builder(finish_fn = build)]
-pub fn generate_name(
-    #[builder(start_fn)] tree: &SyntaxTree,
+pub fn generate_name<Dialect>(
+    #[builder(start_fn)] tree: &SyntaxTree<Dialect>,
     max_len: Option<usize>,
 ) -> Option<String> {
     let mut parts = tree
-        .0
+        .tree
         .iter()
         .filter_map(|s| match s {
             Statement::CreateTable(CreateTable { name, .. }) => Some(format!("create_{name}")),
@@ -113,6 +113,7 @@ fn alter_table_name(name: &ObjectName, operations: &[AlterTableOperation]) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dialect;
 
     #[derive(Debug)]
     struct TestCase {
@@ -121,7 +122,7 @@ mod tests {
     }
 
     fn run_test_case(tc: &TestCase) {
-        let tree = SyntaxTree::builder().sql(tc.sql).build().unwrap();
+        let tree = SyntaxTree::parse(dialect::Generic, tc.sql).unwrap();
         let actual = generate_name(&tree).build();
         assert_eq!(actual, Some(tc.name.to_owned()), "{tc:?}");
     }

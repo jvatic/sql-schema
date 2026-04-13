@@ -1,13 +1,19 @@
 use std::fmt;
 
 use bon::bon;
+use sqlparser::ast::{CreateDomain, CreateIndex};
 use thiserror::Error;
 
-use crate::ast::{
-    AlterColumnOperation, AlterTable, AlterTableOperation, AlterType, AlterTypeAddValuePosition,
-    AlterTypeOperation, ColumnOption, ColumnOptionDef, CreateExtension, CreateTable, DropExtension,
-    GeneratedAs, ObjectName, ObjectNamePart, ObjectType, Statement, UserDefinedTypeRepresentation,
+use crate::{
+    ast::{
+        AlterTable, AlterTableOperation, AlterType, AlterTypeOperation, CreateExtension,
+        CreateTable, CreateType, Statement,
+    },
+    dialect::{Generic, PostgreSQL, SQLite},
+    sealed::Sealed,
 };
+
+pub mod generic;
 
 #[derive(Error, Debug)]
 pub struct MigrateError {
@@ -52,8 +58,6 @@ impl MigrateError {
 #[derive(Error, Debug)]
 #[non_exhaustive]
 enum MigrateErrorKind {
-    #[error("can't migrate unnamed index")]
-    UnnamedIndex,
     #[error("ALTER TABLE operation \"{0}\" not yet supported")]
     AlterTableOpNotImplemented(Box<AlterTableOperation>),
     #[error("invalid ALTER TYPE operation \"{0}\"")]
@@ -62,358 +66,105 @@ enum MigrateErrorKind {
     NotImplemented,
 }
 
-pub(crate) trait Migrate: Sized {
-    fn migrate(self, other: &Self) -> Result<Option<Self>, MigrateError>;
-}
+type Result<T, E = MigrateError> = std::result::Result<T, E>;
 
-impl Migrate for Vec<Statement> {
-    fn migrate(self, other: &Self) -> Result<Option<Self>, MigrateError> {
-        let next: Self = self
-            .into_iter()
-            // perform any transformations on existing schema (e.g. ALTER/DROP table)
-            .filter_map(|sa| {
-                let orig = sa.clone();
-                match &sa {
-                    Statement::CreateTable(ca) => other
-                        .iter()
-                        .find(|sb| match sb {
-                            Statement::AlterTable(AlterTable { name, .. }) => *name == ca.name,
-                            Statement::Drop {
-                                object_type, names, ..
-                            } => {
-                                *object_type == ObjectType::Table
-                                    && names.len() == 1
-                                    && names[0] == ca.name
-                            }
-                            _ => false,
-                        })
-                        .map_or(Some(Ok(orig)), |sb| sa.migrate(sb).transpose()),
-                    Statement::CreateIndex(a) => other
-                        .iter()
-                        .find(|sb| match sb {
-                            Statement::Drop {
-                                object_type, names, ..
-                            } => {
-                                *object_type == ObjectType::Index
-                                    && names.len() == 1
-                                    && Some(&names[0]) == a.name.as_ref()
-                            }
-                            _ => false,
-                        })
-                        .map_or(Some(Ok(orig)), |sb| sa.migrate(sb).transpose()),
-                    Statement::CreateType { name, .. } => other
-                        .iter()
-                        .find(|sb| match sb {
-                            Statement::AlterType(b) => *name == b.name,
-                            Statement::Drop {
-                                object_type, names, ..
-                            } => {
-                                *object_type == ObjectType::Type
-                                    && names.len() == 1
-                                    && names[0] == *name
-                            }
-                            _ => false,
-                        })
-                        .map_or(Some(Ok(orig)), |sb| sa.migrate(sb).transpose()),
-                    Statement::CreateExtension(CreateExtension { name, .. }) => other
-                        .iter()
-                        .find(|sb| match sb {
-                            Statement::DropExtension(DropExtension { names, .. }) => {
-                                names.contains(name)
-                            }
-                            _ => false,
-                        })
-                        .map_or(Some(Ok(orig)), |sb| sa.migrate(sb).transpose()),
-                    Statement::CreateDomain(a) => other
-                        .iter()
-                        .find(|sb| match sb {
-                            Statement::DropDomain(b) => a.name == b.name,
-                            _ => false,
-                        })
-                        .map_or(Some(Ok(orig)), |sb| sa.migrate(sb).transpose()),
-                    _ => Some(Err(MigrateError::builder()
-                        .kind(MigrateErrorKind::NotImplemented)
-                        .statement_a(sa.clone())
-                        .build())),
-                }
-            })
-            // CREATE table etc.
-            .chain(other.iter().filter_map(|sb| match sb {
-                Statement::CreateTable(_)
-                | Statement::CreateIndex { .. }
-                | Statement::CreateType { .. }
-                | Statement::CreateExtension { .. }
-                | Statement::CreateDomain(..) => Some(Ok(sb.clone())),
-                _ => None,
-            }))
-            .collect::<Result<_, _>>()?;
-        Ok(Some(next))
+pub trait TreeMigrator: StatementMigrator + Sealed {
+    fn migrate_tree(&self, a: Vec<Statement>, b: &[Statement]) -> Result<Vec<Statement>> {
+        generic::tree::migrate_tree(self, a, b)
+    }
+
+    fn match_and_migrate_create_table(
+        &self,
+        sa: &Statement,
+        a: &CreateTable,
+        b: &[Statement],
+    ) -> Result<Vec<Statement>> {
+        generic::tree::match_and_migrate_create_table(self, sa, a, b)
+    }
+
+    fn match_and_migrate_create_index(
+        &self,
+        sa: &Statement,
+        a: &CreateIndex,
+        b: &[Statement],
+    ) -> Result<Vec<Statement>> {
+        generic::tree::match_and_migrate_create_index(self, sa, a, b)
+    }
+
+    fn match_and_migrate_create_type(
+        &self,
+        sa: &Statement,
+        a: &CreateType,
+        b: &[Statement],
+    ) -> Result<Vec<Statement>> {
+        generic::tree::match_and_migrate_create_type(self, sa, a, b)
+    }
+
+    fn match_and_migrate_create_extension(
+        &self,
+        sa: &Statement,
+        a: &CreateExtension,
+        b: &[Statement],
+    ) -> Result<Vec<Statement>> {
+        generic::tree::match_and_migrate_create_extension(self, sa, a, b)
+    }
+
+    fn match_and_migrate_create_domain(
+        &self,
+        sa: &Statement,
+        a: &CreateDomain,
+        b: &[Statement],
+    ) -> Result<Vec<Statement>> {
+        generic::tree::match_and_migrate_create_domain(self, sa, a, b)
     }
 }
 
-impl Migrate for Statement {
-    fn migrate(self, other: &Self) -> Result<Option<Self>, MigrateError> {
-        match self {
-            Self::CreateTable(ca) => match other {
-                Self::AlterTable(AlterTable {
-                    name, operations, ..
-                }) => {
-                    if *name == ca.name {
-                        Ok(Some(Self::CreateTable(migrate_alter_table(
-                            ca, operations,
-                        )?)))
-                    } else {
-                        // ALTER TABLE statement for another table
-                        Ok(Some(Self::CreateTable(ca)))
-                    }
-                }
-                Self::Drop {
-                    object_type, names, ..
-                } => {
-                    if *object_type == ObjectType::Table && names.contains(&ca.name) {
-                        Ok(None)
-                    } else {
-                        // DROP statement is for another table
-                        Ok(Some(Self::CreateTable(ca)))
-                    }
-                }
-                _ => Err(MigrateError::builder()
-                    .kind(MigrateErrorKind::NotImplemented)
-                    .statement_a(Self::CreateTable(ca))
-                    .statement_b(other.clone())
-                    .build()),
-            },
-            Self::CreateIndex(a) => match other {
-                Self::Drop {
-                    object_type, names, ..
-                } => {
-                    let name = a.name.clone().ok_or_else(|| {
-                        MigrateError::builder()
-                            .kind(MigrateErrorKind::UnnamedIndex)
-                            .statement_a(Self::CreateIndex(a.clone()))
-                            .statement_b(other.clone())
-                            .build()
-                    })?;
-                    if *object_type == ObjectType::Index && names.contains(&name) {
-                        Ok(None)
-                    } else {
-                        // DROP statement is for another index
-                        Ok(Some(Self::CreateIndex(a)))
-                    }
-                }
-                _ => Err(MigrateError::builder()
-                    .kind(MigrateErrorKind::NotImplemented)
-                    .statement_a(Self::CreateIndex(a))
-                    .statement_b(other.clone())
-                    .build()),
-            },
-            Self::CreateType {
-                name,
-                representation,
-            } => match other {
-                Self::AlterType(ba) => {
-                    if name == ba.name {
-                        let (name, representation) =
-                            migrate_alter_type(name.clone(), representation.clone(), ba)?;
-                        Ok(Some(Self::CreateType {
-                            name,
-                            representation,
-                        }))
-                    } else {
-                        // ALTER TYPE statement for another type
-                        Ok(Some(Self::CreateType {
-                            name,
-                            representation,
-                        }))
-                    }
-                }
-                Self::Drop {
-                    object_type, names, ..
-                } => {
-                    if *object_type == ObjectType::Type && names.contains(&name) {
-                        Ok(None)
-                    } else {
-                        // DROP statement is for another type
-                        Ok(Some(Self::CreateType {
-                            name,
-                            representation,
-                        }))
-                    }
-                }
-                _ => Err(MigrateError::builder()
-                    .kind(MigrateErrorKind::NotImplemented)
-                    .statement_a(Self::CreateType {
-                        name,
-                        representation,
-                    })
-                    .statement_b(other.clone())
-                    .build()),
-            },
-            _ => Err(MigrateError::builder()
-                .kind(MigrateErrorKind::NotImplemented)
-                .statement_a(self)
-                .statement_b(other.clone())
-                .build()),
-        }
+impl TreeMigrator for Generic {}
+
+impl TreeMigrator for PostgreSQL {}
+
+impl TreeMigrator for SQLite {}
+
+pub trait StatementMigrator: fmt::Debug + Default + Clone + Sized + Sealed {
+    fn migrate(&self, a: &Statement, b: &Statement) -> Result<Vec<Statement>> {
+        generic::statement::migrate(self, a, b)
+    }
+
+    fn migrate_create_table(&self, a: &CreateTable, sb: &Statement) -> Result<Vec<Statement>> {
+        generic::statement::migrate_create_table(self, a, sb)
+    }
+
+    fn migrate_alter_table(&self, a: &CreateTable, b: &AlterTable) -> Result<Vec<Statement>> {
+        generic::statement::migrate_alter_table(self, a, b)
+    }
+
+    fn migrate_create_index(&self, a: &CreateIndex, sb: &Statement) -> Result<Vec<Statement>> {
+        generic::statement::migrate_create_index(self, a, sb)
+    }
+
+    fn migrate_create_type(&self, a: &CreateType, sb: &Statement) -> Result<Vec<Statement>> {
+        generic::statement::migrate_create_type(self, a, sb)
+    }
+
+    fn migrate_alter_type(&self, a: &CreateType, b: &AlterType) -> Result<Vec<Statement>> {
+        generic::statement::migrate_alter_type(self, a, b)
+    }
+
+    fn migrate_create_extension(
+        &self,
+        a: &CreateExtension,
+        sb: &Statement,
+    ) -> Result<Vec<Statement>> {
+        generic::statement::migrate_create_extension(self, a, sb)
+    }
+
+    fn migrate_create_domain(&self, a: &CreateDomain, sb: &Statement) -> Result<Vec<Statement>> {
+        generic::statement::migrate_create_domain(self, a, sb)
     }
 }
 
-fn migrate_alter_table(
-    mut t: CreateTable,
-    ops: &[AlterTableOperation],
-) -> Result<CreateTable, MigrateError> {
-    for op in ops.iter() {
-        match op {
-            AlterTableOperation::AddColumn { column_def, .. } => {
-                t.columns.push(column_def.clone());
-            }
-            AlterTableOperation::DropColumn { column_names, .. } => {
-                t.columns
-                    .retain(|c| !column_names.iter().any(|name| c.name.value == name.value));
-            }
-            AlterTableOperation::AlterColumn { column_name, op } => {
-                t.columns.iter_mut().for_each(|c| {
-                    if c.name != *column_name {
-                        return;
-                    }
-                    match op {
-                        AlterColumnOperation::SetNotNull => {
-                            c.options.push(ColumnOptionDef {
-                                name: None,
-                                option: ColumnOption::NotNull,
-                            });
-                        }
-                        AlterColumnOperation::DropNotNull => {
-                            c.options
-                                .retain(|o| !matches!(o.option, ColumnOption::NotNull));
-                        }
-                        AlterColumnOperation::SetDefault { value } => {
-                            c.options
-                                .retain(|o| !matches!(o.option, ColumnOption::Default(_)));
-                            c.options.push(ColumnOptionDef {
-                                name: None,
-                                option: ColumnOption::Default(value.clone()),
-                            });
-                        }
-                        AlterColumnOperation::DropDefault => {
-                            c.options
-                                .retain(|o| !matches!(o.option, ColumnOption::Default(_)));
-                        }
-                        AlterColumnOperation::SetDataType {
-                            data_type,
-                            using: _,   // not applicable since we're not running the query
-                            had_set: _, // this doesn't change the meaning
-                        } => {
-                            c.data_type = data_type.clone();
-                        }
-                        AlterColumnOperation::AddGenerated {
-                            generated_as,
-                            sequence_options,
-                        } => {
-                            c.options
-                                .retain(|o| !matches!(o.option, ColumnOption::Generated { .. }));
-                            c.options.push(ColumnOptionDef {
-                                name: None,
-                                option: ColumnOption::Generated {
-                                    generated_as: (*generated_as).unwrap_or(GeneratedAs::Always),
-                                    sequence_options: sequence_options.clone(),
-                                    generation_expr: None,
-                                    generation_expr_mode: None,
-                                    generated_keyword: true,
-                                },
-                            });
-                        }
-                    }
-                });
-            }
-            op => {
-                return Err(MigrateError::builder()
-                    .kind(MigrateErrorKind::AlterTableOpNotImplemented(Box::new(
-                        op.clone(),
-                    )))
-                    .statement_a(Statement::CreateTable(t.clone()))
-                    .build())
-            }
-        }
-    }
+impl StatementMigrator for Generic {}
 
-    Ok(t)
-}
+impl StatementMigrator for PostgreSQL {}
 
-fn migrate_alter_type(
-    name: ObjectName,
-    representation: Option<UserDefinedTypeRepresentation>,
-    other: &AlterType,
-) -> Result<(ObjectName, Option<UserDefinedTypeRepresentation>), MigrateError> {
-    match &other.operation {
-        AlterTypeOperation::Rename(r) => {
-            let mut parts = name.0;
-            parts.pop();
-            parts.push(ObjectNamePart::Identifier(r.new_name.clone()));
-            let name = ObjectName(parts);
-
-            Ok((name, representation))
-        }
-        AlterTypeOperation::AddValue(a) => match representation {
-            Some(UserDefinedTypeRepresentation::Enum { mut labels }) => {
-                match &a.position {
-                    Some(AlterTypeAddValuePosition::Before(before_name)) => {
-                        let index = labels
-                            .iter()
-                            .enumerate()
-                            .find(|(_, l)| *l == before_name)
-                            .map(|(i, _)| i)
-                            // insert at the beginning if `before_name` can't be found
-                            .unwrap_or(0);
-                        labels.insert(index, a.value.clone());
-                    }
-                    Some(AlterTypeAddValuePosition::After(after_name)) => {
-                        let index = labels
-                            .iter()
-                            .enumerate()
-                            .find(|(_, l)| *l == after_name)
-                            .map(|(i, _)| i + 1);
-                        match index {
-                            Some(index) => labels.insert(index, a.value.clone()),
-                            // push it to the end if `after_name` can't be found
-                            None => labels.push(a.value.clone()),
-                        }
-                    }
-                    None => labels.push(a.value.clone()),
-                }
-
-                Ok((name, Some(UserDefinedTypeRepresentation::Enum { labels })))
-            }
-            Some(_) | None => Err(MigrateError::builder()
-                .kind(MigrateErrorKind::AlterTypeInvalidOp(Box::new(
-                    other.operation.clone(),
-                )))
-                .statement_a(Statement::CreateType {
-                    name,
-                    representation,
-                })
-                .statement_b(Statement::AlterType(other.clone()))
-                .build()),
-        },
-        AlterTypeOperation::RenameValue(rv) => match representation {
-            Some(UserDefinedTypeRepresentation::Enum { labels }) => {
-                let labels = labels
-                    .into_iter()
-                    .map(|l| if l == rv.from { rv.to.clone() } else { l })
-                    .collect::<Vec<_>>();
-
-                Ok((name, Some(UserDefinedTypeRepresentation::Enum { labels })))
-            }
-            Some(_) | None => Err(MigrateError::builder()
-                .kind(MigrateErrorKind::AlterTypeInvalidOp(Box::new(
-                    other.operation.clone(),
-                )))
-                .statement_a(Statement::CreateType {
-                    name,
-                    representation,
-                })
-                .statement_b(Statement::AlterType(other.clone()))
-                .build()),
-        },
-    }
-}
+impl StatementMigrator for SQLite {}

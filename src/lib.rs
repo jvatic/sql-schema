@@ -1,93 +1,80 @@
 use std::fmt;
 
-use bon::bon;
-use sqlparser::{
-    dialect::{self},
-    parser::{self, Parser},
-};
-use thiserror::Error;
+use self::ast::Statement;
 
-use ast::Statement;
-use diff::Diff;
-use migration::Migrate;
+pub use self::{
+    diff::TreeDiffer,
+    migration::TreeMigrator,
+    parser::{Parse, ParseError},
+};
 
 mod ast;
+pub mod dialect;
 mod diff;
 mod migration;
 pub mod name_gen;
+mod parser;
 pub mod path_template;
+mod sealed;
 
-#[derive(Error, Debug)]
-#[error("Oops, we couldn't parse that!")]
-pub struct ParseError(#[from] parser::ParserError);
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
-#[cfg_attr(feature = "clap", derive(clap::ValueEnum), clap(rename_all = "lower"))]
-#[non_exhaustive]
-pub enum Dialect {
-    #[default]
-    Generic,
-    PostgreSql,
-    SQLite,
+#[derive(Debug, Clone)]
+pub struct SyntaxTree<Dialect> {
+    dialect: Dialect,
+    pub(crate) tree: Vec<Statement>,
 }
 
-impl Dialect {
-    fn to_sqlparser_dialect(self) -> Box<dyn dialect::Dialect> {
-        match self {
-            Self::Generic => Box::new(dialect::GenericDialect {}),
-            Self::PostgreSql => Box::new(dialect::PostgreSqlDialect {}),
-            Self::SQLite => Box::new(dialect::SQLiteDialect {}),
+impl<Dialect: Default> SyntaxTree<Dialect> {
+    pub fn empty() -> Self {
+        Self {
+            dialect: Default::default(),
+            tree: Vec::with_capacity(0),
         }
     }
 }
 
-impl fmt::Display for Dialect {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // NOTE: this must match how clap::ValueEnum displays variants
-        write!(
-            f,
-            "{}",
-            format!("{self:?}")
-                .to_ascii_lowercase()
-                .split('-')
-                .collect::<String>()
-        )
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SyntaxTree(pub(crate) Vec<Statement>);
-
-#[bon]
-impl SyntaxTree {
-    #[builder]
-    pub fn new<'a>(dialect: Option<Dialect>, sql: impl Into<&'a str>) -> Result<Self, ParseError> {
-        let dialect = dialect.unwrap_or_default().to_sqlparser_dialect();
-        let ast = Parser::parse_sql(dialect.as_ref(), sql.into())?;
-        Ok(Self(ast))
-    }
-
-    pub fn empty() -> Self {
-        Self(vec![])
+impl<Dialect> SyntaxTree<Dialect>
+where
+    Dialect: Parse,
+{
+    pub fn parse<'a>(dialect: Dialect, sql: impl Into<&'a str>) -> Result<Self, ParseError> {
+        let tree = dialect.parse_sql::<Dialect>(sql)?;
+        Ok(Self { dialect, tree })
     }
 }
 
 pub use diff::DiffError;
 pub use migration::MigrateError;
 
-impl SyntaxTree {
-    pub fn diff(&self, other: &SyntaxTree) -> Result<Option<Self>, DiffError> {
-        Ok(Diff::diff(&self.0, &other.0)?.map(Self))
-    }
-
-    pub fn migrate(self, other: &SyntaxTree) -> Result<Option<Self>, MigrateError> {
-        Ok(Migrate::migrate(self.0, &other.0)?.map(Self))
+impl<Dialect> SyntaxTree<Dialect>
+where
+    Dialect: TreeDiffer,
+{
+    pub fn diff(&self, other: &SyntaxTree<Dialect>) -> Result<Option<Self>, DiffError> {
+        Ok(
+            TreeDiffer::diff_tree(&self.dialect, &self.tree, &other.tree)?.map(|tree| Self {
+                dialect: self.dialect.clone(),
+                tree,
+            }),
+        )
     }
 }
 
-impl fmt::Display for SyntaxTree {
+impl<Dialect> SyntaxTree<Dialect>
+where
+    Dialect: TreeMigrator,
+{
+    pub fn migrate(self, other: &SyntaxTree<Dialect>) -> Result<Self, MigrateError> {
+        let tree = TreeMigrator::migrate_tree(&self.dialect, self.tree, &other.tree)?;
+        Ok(Self {
+            dialect: self.dialect.clone(),
+            tree,
+        })
+    }
+}
+
+impl<Dialect> fmt::Display for SyntaxTree<Dialect> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut iter = self.0.iter().peekable();
+        let mut iter = self.tree.iter().peekable();
         while let Some(s) = iter.next() {
             let formatted = sqlformat::format(
                 format!("{s};").as_str(),
@@ -105,11 +92,12 @@ impl fmt::Display for SyntaxTree {
 
 #[cfg(test)]
 mod tests {
+    use super::dialect::Generic;
     use super::*;
 
     macro_rules! test_case {
         (
-            @dialect($dialect:path) $(,)?
+            @dialect($dialect:ty) $(,)?
 
             $(
                 $test_name:ident { $( $field:ident : $value:literal ),+ $(,)? }
@@ -120,8 +108,10 @@ mod tests {
             $(
                 #[test]
                 fn $test_name() {
-                    let test_case = TestCase {
-                        dialect: $dialect,
+                    let dialect = <$dialect>::default();
+
+                    let test_case: TestCase<$dialect> = TestCase {
+                        dialect: dialect.clone(),
                         $( $field : $value ),+
                     };
 
@@ -132,32 +122,23 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct TestCase {
+    struct TestCase<Dialect = Generic> {
         dialect: Dialect,
         sql_a: &'static str,
         sql_b: &'static str,
         expect: &'static str,
     }
 
-    fn run_test_case<F, E>(tc: &TestCase, testfn: F)
+    fn run_test_case<F, E, Dialect>(tc: &TestCase<Dialect>, testfn: F)
     where
-        F: Fn(SyntaxTree, SyntaxTree) -> Result<Option<SyntaxTree>, E>,
+        Dialect: Parse + TreeDiffer,
         E: std::error::Error,
+        F: Fn(SyntaxTree<Dialect>, SyntaxTree<Dialect>) -> Result<Option<SyntaxTree<Dialect>>, E>,
     {
-        let ast_a = SyntaxTree::builder()
-            .dialect(tc.dialect)
-            .sql(tc.sql_a)
-            .build()
-            .unwrap();
-        let ast_b = SyntaxTree::builder()
-            .dialect(tc.dialect)
-            .sql(tc.sql_b)
-            .build()
-            .unwrap();
-        SyntaxTree::builder()
-            .dialect(tc.dialect)
-            .sql(tc.expect)
-            .build()
+        let dialect = tc.dialect.clone();
+        let ast_a = SyntaxTree::parse(dialect.clone(), tc.sql_a).unwrap();
+        let ast_b = SyntaxTree::parse(dialect.clone(), tc.sql_b).unwrap();
+        SyntaxTree::parse(dialect, tc.expect)
             .unwrap_or_else(|_| panic!("invalid SQL: {:?}", tc.expect));
         let actual = testfn(ast_a, ast_b)
             .inspect_err(|err| eprintln!("Error: {err:?}"))
@@ -170,7 +151,7 @@ mod tests {
         use super::*;
 
         test_case!(
-            @dialect(Dialect::Generic)
+            @dialect(Generic)
 
             create_table_a {
                 sql_a: "CREATE TABLE foo(\
@@ -304,7 +285,7 @@ mod tests {
         );
 
         test_case!(
-            @dialect(Dialect::Generic)
+            @dialect(Generic)
 
             create_domain_a {
                 sql_a: "",
@@ -325,10 +306,12 @@ mod tests {
     }
 
     mod migrate {
+        use crate::dialect::PostgreSQL;
+
         use super::*;
 
         test_case!(
-            @dialect(Dialect::Generic)
+            @dialect(Generic)
 
             create_table_a {
                 sql_a: "CREATE TABLE bar (id INT PRIMARY KEY);",
@@ -451,12 +434,12 @@ mod tests {
             },
 
             => |ast_a, ast_b| {
-                ast_a.migrate(&ast_b)
+                Some(ast_a.migrate(&ast_b)).transpose()
             }
         );
 
         test_case!(
-            @dialect(Dialect::PostgreSql)
+            @dialect(PostgreSQL)
 
             alter_table_alter_column_e {
                 sql_a: "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY)",
@@ -471,7 +454,7 @@ mod tests {
             },
 
             => |ast_a, ast_b| {
-                ast_a.migrate(&ast_b)
+                Some(ast_a.migrate(&ast_b)).transpose()
             }
         );
     }

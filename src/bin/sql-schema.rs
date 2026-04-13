@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     fs::{self, File, OpenOptions},
     io::{self, Write},
     process::{self},
@@ -12,7 +13,7 @@ use clap::{Parser, Subcommand};
 use sql_schema::{
     name_gen,
     path_template::{PathTemplate, TemplateData, UpDown},
-    Dialect, SyntaxTree,
+    SyntaxTree, TreeDiffer, TreeMigrator,
 };
 
 #[derive(Parser, Debug)]
@@ -44,6 +45,30 @@ struct SchemaCommand {
     /// dialect of SQL to use
     #[arg(short, long, default_value_t = Dialect::Generic)]
     dialect: Dialect,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default, clap::ValueEnum)]
+#[clap(rename_all = "lower")]
+#[non_exhaustive]
+pub enum Dialect {
+    #[default]
+    Generic,
+    PostgreSql,
+    SQLite,
+}
+
+impl fmt::Display for Dialect {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // NOTE: this must match how clap::ValueEnum displays variants
+        write!(
+            f,
+            "{}",
+            format!("{self:?}")
+                .to_ascii_lowercase()
+                .split('-')
+                .collect::<String>()
+        )
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -102,15 +127,44 @@ fn main() {
     }
 }
 
+macro_rules! match_dialect {
+    ( $dialect:expr, $expr:expr ) => {
+        match $dialect {
+            Dialect::Generic => {
+                let dialect = sql_schema::dialect::Generic::default();
+                $expr(dialect)
+            }
+            Dialect::PostgreSql => {
+                let dialect = sql_schema::dialect::PostgreSQL::default();
+                $expr(dialect)
+            }
+            Dialect::SQLite => {
+                let dialect = sql_schema::dialect::SQLite::default();
+                $expr(dialect)
+            }
+        }
+    };
+}
+
 /// create or update schema file from migrations
 fn run_schema(command: SchemaCommand) -> anyhow::Result<()> {
     ensure_schema_file(&command.schema_path)?;
     ensure_migration_dir(&command.migrations_dir)?;
 
-    let (migrations, _) = parse_migrations(command.dialect, &command.migrations_dir)?;
-    let schema = parse_sql_file(command.dialect, &command.schema_path)?;
+    match_dialect!(&command.dialect, |dialect| run_schema_inner(
+        dialect, command
+    ))
+}
+
+fn run_schema_inner<D>(dialect: D, command: SchemaCommand) -> anyhow::Result<()>
+where
+    D: TreeDiffer + TreeMigrator + sql_schema::Parse,
+{
+    let (migrations, _) = parse_migrations(dialect.clone(), &command.migrations_dir)?;
+    let schema = parse_sql_file(dialect, &command.schema_path)?;
+
     let diff = schema.diff(&migrations)?.unwrap_or_else(SyntaxTree::empty);
-    let schema = schema.migrate(&diff)?.unwrap_or_else(SyntaxTree::empty);
+    let schema = schema.migrate(&diff)?;
     eprintln!("writing {}", command.schema_path);
     OpenOptions::new()
         .write(true)
@@ -126,9 +180,18 @@ fn run_migration(command: MigrationCommand) -> anyhow::Result<()> {
     ensure_schema_file(&command.schema_path)?;
     ensure_migration_dir(&command.migrations_dir)?;
 
-    let (migrations, opts) = parse_migrations(command.dialect, &command.migrations_dir)?;
+    match_dialect!(&command.dialect, |dialect| run_migration_inner(
+        dialect, command
+    ))
+}
+
+fn run_migration_inner<D>(dialect: D, command: MigrationCommand) -> anyhow::Result<()>
+where
+    D: TreeDiffer + TreeMigrator + sql_schema::Parse,
+{
+    let (migrations, opts) = parse_migrations(dialect.clone(), &command.migrations_dir)?;
     let opts = opts.reconcile(&command);
-    let schema = parse_sql_file(command.dialect, &command.schema_path)?;
+    let schema = parse_sql_file(dialect, &command.schema_path)?;
     match migrations.diff(&schema)? {
         Some(up_migration) => {
             let name = if opts.num_migrations == 0 {
@@ -191,7 +254,7 @@ fn run_migration(command: MigrationCommand) -> anyhow::Result<()> {
     }
 }
 
-fn write_migration(migration: SyntaxTree, path: &Utf8Path) -> anyhow::Result<()> {
+fn write_migration<Dialect>(migration: SyntaxTree<Dialect>, path: &Utf8Path) -> anyhow::Result<()> {
     eprintln!("writing {path}");
     if let Some(parent) = path.parent() {
         eprintln!("creating {parent}");
@@ -228,20 +291,23 @@ fn ensure_migration_dir(dir: &Utf8Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn parse_sql_file(dialect: Dialect, path: &Utf8Path) -> anyhow::Result<SyntaxTree> {
+fn parse_sql_file<Dialect>(dialect: Dialect, path: &Utf8Path) -> anyhow::Result<SyntaxTree<Dialect>>
+where
+    Dialect: sql_schema::Parse,
+{
     let data = fs::read_to_string(path)?;
-    SyntaxTree::builder()
-        .dialect(dialect)
-        .sql(data.as_str())
-        .build()
-        .context(format!("path: {path}"))
+    let data = data.as_str();
+    SyntaxTree::parse(dialect, data).context(format!("path: {path}"))
 }
 
 /// builds a [SyntaxTree] by applying each migration in order
-fn parse_migrations(
+fn parse_migrations<Dialect>(
     dialect: Dialect,
     dir: &Utf8Path,
-) -> anyhow::Result<(SyntaxTree, MigrationOptions)> {
+) -> anyhow::Result<(SyntaxTree<Dialect>, MigrationOptions)>
+where
+    Dialect: TreeDiffer + TreeMigrator + sql_schema::Parse,
+{
     fn process_dir_entry(
         entry: io::Result<Utf8DirEntry>,
     ) -> anyhow::Result<Option<Vec<Utf8PathBuf>>> {
@@ -308,10 +374,8 @@ fn parse_migrations(
             .iter()
             .try_fold(SyntaxTree::empty(), |schema, path| -> anyhow::Result<_> {
                 eprintln!("parsing {path}");
-                let migration = parse_sql_file(dialect, path)?;
-                let schema = schema
-                    .migrate(&migration)?
-                    .unwrap_or_else(SyntaxTree::empty);
+                let migration = parse_sql_file(dialect.clone(), path)?;
+                let schema = schema.migrate(&migration)?;
                 Ok(schema)
             })?;
     Ok((tree, opts))
