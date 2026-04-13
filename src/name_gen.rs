@@ -126,65 +126,79 @@ mod tests {
         assert_eq!(actual, Some(tc.name.to_owned()), "{tc:?}");
     }
 
-    fn run_test_cases(test_cases: Vec<TestCase>) {
-        test_cases.iter().for_each(run_test_case);
+    macro_rules! test_case {
+        (
+            $(
+                $test_name:ident {
+                    $( $field:ident : $value:expr ),+ $(,)?
+                }
+            ),* $(,)?
+        ) => {
+            $(
+                #[test]
+                fn $test_name() {
+                    let test_case = TestCase {
+                        $( $field : $value ),+
+                    };
+
+                    run_test_case(&test_case);
+                }
+            )*
+        };
     }
 
-    #[test]
-    fn test_generate_name() {
-        run_test_cases(vec![
-            TestCase {
-                sql: "CREATE TABLE foo(bar TEXT);",
-                name: "create_foo",
-            },
-            TestCase {
-                sql: "CREATE TABLE foo(bar TEXT); CREATE TABLE bar(foo TEXT);",
-                name: "create_foo__create_bar",
-            },
-            TestCase {
-                sql: "CREATE TABLE foo(bar TEXT); CREATE TABLE bar(foo TEXT); CREATE TABLE baz(id INT); CREATE TABLE some_really_long_name(id INT);",
-                name: "create_foo__create_bar__create_baz__etc",
-            },
-            TestCase {
-                sql: "ALTER TABLE foo DROP COLUMN bar;",
-                name: "alter_foo_drop_bar",
-            },
-            TestCase {
-                sql: "ALTER TABLE foo ADD COLUMN bar TEXT;",
-                name: "alter_foo_add_bar",
-            },
-            TestCase {
-                sql: "ALTER TABLE foo ALTER COLUMN bar SET DATA TYPE INT;",
-                name: "alter_foo_alter_bar",
-            },
-            TestCase {
-                sql: "ALTER TABLE foo RENAME bar TO id;",
-                name: "alter_foo_rename_bar_to_id",
-            },
-            TestCase {
-                sql: "ALTER TABLE foo RENAME TO bar;",
-                name: "rename_foo_to_bar",
-            },
-            TestCase {
-                sql: "DROP TABLE foo;",
-                name: "drop_foo",
-            },
-            TestCase {
-                sql: "CREATE TYPE status AS ENUM('one', 'two', 'three');",
-                name: "create_type_status",
-            },
-            TestCase {
-                sql: "DROP TYPE status;",
-                name: "drop_type_status",
-            },
-            TestCase {
-                sql: "CREATE UNIQUE INDEX title_idx ON films (title);",
-                name: "create_films_title_idx",
-            },
-            TestCase {
-                sql: "DROP INDEX title_idx",
-                name: "drop_index_title_idx",
-            },
-        ]);
-    }
+    test_case!(
+        create_table {
+            sql: "CREATE TABLE foo(bar TEXT);",
+            name: "create_foo",
+        },
+        create_two_tables {
+            sql: "CREATE TABLE foo(bar TEXT); CREATE TABLE bar(foo TEXT);",
+            name: "create_foo__create_bar",
+        },
+        create_four_tables {
+            sql: "CREATE TABLE foo(bar TEXT); CREATE TABLE bar(foo TEXT); CREATE TABLE baz(id INT); CREATE TABLE some_really_long_name(id INT);",
+            name: "create_foo__create_bar__create_baz__etc",
+        },
+        drop_column {
+            sql: "ALTER TABLE foo DROP COLUMN bar;",
+            name: "alter_foo_drop_bar",
+        },
+        add_column {
+            sql: "ALTER TABLE foo ADD COLUMN bar TEXT;",
+            name: "alter_foo_add_bar",
+        },
+        alter_column {
+            sql: "ALTER TABLE foo ALTER COLUMN bar SET DATA TYPE INT;",
+            name: "alter_foo_alter_bar",
+        },
+        rename_column {
+            sql: "ALTER TABLE foo RENAME bar TO id;",
+            name: "alter_foo_rename_bar_to_id",
+        },
+        rename_table {
+            sql: "ALTER TABLE foo RENAME TO bar;",
+            name: "rename_foo_to_bar",
+        },
+        drop_table {
+            sql: "DROP TABLE foo;",
+            name: "drop_foo",
+        },
+        create_enum_type {
+            sql: "CREATE TYPE status AS ENUM('one', 'two', 'three');",
+            name: "create_type_status",
+        },
+        drop_type {
+            sql: "DROP TYPE status;",
+            name: "drop_type_status",
+        },
+        create_index {
+            sql: "CREATE UNIQUE INDEX title_idx ON films (title);",
+            name: "create_films_title_idx",
+        },
+        drop_index {
+            sql: "DROP INDEX title_idx",
+            name: "drop_index_title_idx",
+        },
+    );
 }

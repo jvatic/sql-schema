@@ -127,6 +127,30 @@ impl fmt::Display for SyntaxTree {
 mod tests {
     use super::*;
 
+    macro_rules! test_case {
+        (
+            @dialect($dialect:path) $(,)?
+
+            $(
+                $test_name:ident { $( $field:ident : $value:literal ),+ $(,)? }
+            ),* $(,)?
+
+            => $test_fn:expr $(,)?
+        ) => {
+            $(
+                #[test]
+                fn $test_name() {
+                    let test_case = TestCase {
+                        dialect: $dialect,
+                        $( $field : $value ),+
+                    };
+
+                    run_test_case(&test_case, $test_fn);
+                }
+            )*
+        };
+    }
+
     #[derive(Debug)]
     struct TestCase {
         dialect: Dialect,
@@ -135,9 +159,10 @@ mod tests {
         expect: &'static str,
     }
 
-    fn run_test_case<F>(tc: &TestCase, testfn: F)
+    fn run_test_case<F, E>(tc: &TestCase, testfn: F)
     where
-        F: Fn(SyntaxTree, SyntaxTree) -> SyntaxTree,
+        F: Fn(SyntaxTree, SyntaxTree) -> Result<Option<SyntaxTree>, E>,
+        E: std::error::Error,
     {
         let ast_a = SyntaxTree::builder()
             .dialect(tc.dialect)
@@ -154,463 +179,334 @@ mod tests {
             .sql(tc.expect)
             .build()
             .unwrap_or_else(|_| panic!("invalid SQL: {:?}", tc.expect));
-        let actual = testfn(ast_a, ast_b);
+        let actual = testfn(ast_a, ast_b)
+            .inspect_err(|err| eprintln!("Error: {err:?}"))
+            .unwrap()
+            .unwrap();
         assert_eq!(actual.to_string(), tc.expect, "{tc:?}");
     }
 
-    fn run_test_cases<F, E: fmt::Debug>(test_cases: Vec<TestCase>, testfn: F)
-    where
-        F: Fn(SyntaxTree, SyntaxTree) -> Result<Option<SyntaxTree>, E>,
-    {
-        test_cases.into_iter().for_each(|tc| {
-            run_test_case(&tc, |ast_a, ast_b| {
-                testfn(ast_a, ast_b)
-                    .inspect_err(|err| eprintln!("Error: {err:?}"))
-                    .unwrap()
-                    .unwrap()
-            })
-        });
-    }
+    mod test_diff {
+        use super::*;
 
-    #[test]
-    fn diff_create_table() {
-        run_test_cases(
-            vec![
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TABLE foo(\
-                            id int PRIMARY KEY
-                        )",
-                    sql_b: "CREATE TABLE foo(\
-                            id int PRIMARY KEY
-                        );\
-                        CREATE TABLE bar (id INT PRIMARY KEY);",
-                    expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TABLE foo(\
-                            id int PRIMARY KEY
-                        )",
-                    sql_b: "CREATE TABLE foo(\
-                            \"id\" int PRIMARY KEY
-                        );\
-                        CREATE TABLE bar (id INT PRIMARY KEY);",
-                    expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TABLE foo(\
-                            \"id\" int PRIMARY KEY
-                        )",
-                    sql_b: "CREATE TABLE foo(\
-                            id int PRIMARY KEY
-                        );\
-                        CREATE TABLE bar (id INT PRIMARY KEY);",
-                    expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
-                },
-            ],
-            |ast_a, ast_b| ast_a.diff(&ast_b),
-        );
-    }
+        test_case!(
+            @dialect(Dialect::Generic)
 
-    #[test]
-    fn diff_drop_table() {
-        run_test_cases(
-            vec![TestCase {
-                dialect: Dialect::Generic,
+            create_table_a {
                 sql_a: "CREATE TABLE foo(\
-                        id int PRIMARY KEY
-                    );\
+                    id int PRIMARY KEY
+                )",
+                sql_b: "CREATE TABLE foo(\
+                    id int PRIMARY KEY
+                );\
+                    CREATE TABLE bar (id INT PRIMARY KEY);",
+                expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
+            },
+
+            create_table_b {
+                sql_a: "CREATE TABLE foo(\
+                    id int PRIMARY KEY
+                )",
+                sql_b: "CREATE TABLE foo(\
+                    \"id\" int PRIMARY KEY
+                );\
+                    CREATE TABLE bar (id INT PRIMARY KEY);",
+                expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
+            },
+
+            create_table_c {
+                sql_a: "CREATE TABLE foo(\
+                    \"id\" int PRIMARY KEY
+                )",
+                sql_b: "CREATE TABLE foo(\
+                    id int PRIMARY KEY
+                );\
+                    CREATE TABLE bar (id INT PRIMARY KEY);",
+                expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
+            },
+
+            drop_table_a {
+                sql_a: "CREATE TABLE foo(\
+                    id int PRIMARY KEY
+                );\
                     CREATE TABLE bar (id INT PRIMARY KEY);",
                 sql_b: "CREATE TABLE foo(\
-                        id int PRIMARY KEY
-                    )",
+                    id int PRIMARY KEY
+                )",
                 expect: "DROP TABLE bar;",
-            }],
-            |ast_a, ast_b| ast_a.diff(&ast_b),
-        );
-    }
+            },
 
-    #[test]
-    fn diff_add_column() {
-        run_test_cases(
-            vec![TestCase {
-                dialect: Dialect::Generic,
+            add_column_a {
                 sql_a: "CREATE TABLE foo(\
-                        id int PRIMARY KEY
-                    )",
+                    id int PRIMARY KEY
+                )",
                 sql_b: "CREATE TABLE foo(\
-                        id int PRIMARY KEY,
-                        bar text
-                    )",
+                    id int PRIMARY KEY,
+                    bar text
+                )",
                 expect: "ALTER TABLE\n  foo\nADD\n  COLUMN bar TEXT;",
-            }],
-            |ast_a, ast_b| ast_a.diff(&ast_b),
-        );
-    }
+            },
 
-    #[test]
-    fn diff_drop_column() {
-        run_test_cases(
-            vec![TestCase {
-                dialect: Dialect::Generic,
+            drop_column_a {
                 sql_a: "CREATE TABLE foo(\
-                        id int PRIMARY KEY,
-                        bar text
-                    )",
+                    id int PRIMARY KEY,
+                    bar text
+                )",
                 sql_b: "CREATE TABLE foo(\
-                        id int PRIMARY KEY
-                    )",
+                    id int PRIMARY KEY
+                )",
                 expect: "ALTER TABLE\n  foo DROP COLUMN bar;",
-            }],
-            |ast_a, ast_b| ast_a.diff(&ast_b),
-        );
-    }
+            },
 
-    #[test]
-    fn diff_create_index() {
-        run_test_cases(
-            vec![
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE UNIQUE INDEX title_idx ON films (title);",
-                    sql_b: "CREATE UNIQUE INDEX title_idx ON films ((lower(title)));",
-                    expect: "DROP INDEX title_idx;\n\nCREATE UNIQUE INDEX title_idx ON films((lower(title)));",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE UNIQUE INDEX IF NOT EXISTS title_idx ON films (title);",
-                    sql_b: "CREATE UNIQUE INDEX IF NOT EXISTS title_idx ON films ((lower(title)));",
-                    expect: "DROP INDEX IF EXISTS title_idx;\n\nCREATE UNIQUE INDEX IF NOT EXISTS title_idx ON films((lower(title)));",
-                },
-            ],
-            |ast_a, ast_b| ast_a.diff(&ast_b),
-        );
-    }
+            create_index_a {
+                sql_a: "CREATE UNIQUE INDEX title_idx ON films (title);",
+                sql_b: "CREATE UNIQUE INDEX title_idx ON films ((lower(title)));",
+                expect: "DROP INDEX title_idx;\n\nCREATE UNIQUE INDEX title_idx ON films((lower(title)));",
+            },
 
-    #[test]
-    fn diff_create_type() {
-        run_test_cases(
-            vec![
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TYPE bug_status AS ENUM ('new', 'open');",
-                    sql_b: "CREATE TYPE foo AS ENUM ('bar');",
-                    expect: "DROP TYPE bug_status;\n\nCREATE TYPE foo AS ENUM ('bar');",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'closed');",
-                    sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'assigned', 'closed');",
-                    expect: "ALTER TYPE bug_status\nADD\n  VALUE 'assigned'\nAFTER\n  'open';",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
-                    sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'closed');",
-                    expect: "ALTER TYPE bug_status\nADD\n  VALUE 'new' BEFORE 'open';",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TYPE bug_status AS ENUM ('new', 'open');",
-                    sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'closed');",
-                    expect: "ALTER TYPE bug_status\nADD\n  VALUE 'closed';",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TYPE bug_status AS ENUM ('new', 'open');",
-                    sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'assigned', 'closed');",
-                    expect: "ALTER TYPE bug_status\nADD\n  VALUE 'assigned';\n\nALTER TYPE bug_status\nADD\n  VALUE 'closed';",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TYPE bug_status AS ENUM ('open', 'critical');",
-                    sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'assigned', 'closed', 'critical');",
-                    expect: "ALTER TYPE bug_status\nADD\n  VALUE 'new' BEFORE 'open';\n\nALTER TYPE bug_status\nADD\n  VALUE 'assigned'\nAFTER\n  'open';\n\nALTER TYPE bug_status\nADD\n  VALUE 'closed'\nAFTER\n  'assigned';",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TYPE bug_status AS ENUM ('open');",
-                    sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'closed');",
-                    expect: "ALTER TYPE bug_status\nADD\n  VALUE 'new' BEFORE 'open';\n\nALTER TYPE bug_status\nADD\n  VALUE 'closed';",
-                },
-            ],
-            |ast_a, ast_b| ast_a.diff(&ast_b),
-        );
-    }
+            create_index_b {
+                sql_a: "CREATE UNIQUE INDEX IF NOT EXISTS title_idx ON films (title);",
+                sql_b: "CREATE UNIQUE INDEX IF NOT EXISTS title_idx ON films ((lower(title)));",
+                expect: "DROP INDEX IF EXISTS title_idx;\n\nCREATE UNIQUE INDEX IF NOT EXISTS title_idx ON films((lower(title)));",
+            },
 
-    #[test]
-    fn diff_create_extension() {
-        run_test_cases(
-            vec![TestCase {
-                dialect: Dialect::Generic,
+            create_type_a {
+                sql_a: "CREATE TYPE bug_status AS ENUM ('new', 'open');",
+                sql_b: "CREATE TYPE foo AS ENUM ('bar');",
+                expect: "DROP TYPE bug_status;\n\nCREATE TYPE foo AS ENUM ('bar');",
+            },
+
+            create_type_b {
+                sql_a: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'closed');",
+                sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'assigned', 'closed');",
+                expect: "ALTER TYPE bug_status\nADD\n  VALUE 'assigned'\nAFTER\n  'open';",
+            },
+
+            create_type_c {
+                sql_a: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
+                sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'closed');",
+                expect: "ALTER TYPE bug_status\nADD\n  VALUE 'new' BEFORE 'open';",
+            },
+
+            create_type_d {
+                sql_a: "CREATE TYPE bug_status AS ENUM ('new', 'open');",
+                sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'closed');",
+                expect: "ALTER TYPE bug_status\nADD\n  VALUE 'closed';",
+            },
+
+            create_type_e {
+                sql_a: "CREATE TYPE bug_status AS ENUM ('new', 'open');",
+                sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'assigned', 'closed');",
+                expect: "ALTER TYPE bug_status\nADD\n  VALUE 'assigned';\n\nALTER TYPE bug_status\nADD\n  VALUE 'closed';",
+            },
+
+            create_type_f {
+                sql_a: "CREATE TYPE bug_status AS ENUM ('open', 'critical');",
+                sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'assigned', 'closed', 'critical');",
+                expect: "ALTER TYPE bug_status\nADD\n  VALUE 'new' BEFORE 'open';\n\nALTER TYPE bug_status\nADD\n  VALUE 'assigned'\nAFTER\n  'open';\n\nALTER TYPE bug_status\nADD\n  VALUE 'closed'\nAFTER\n  'assigned';",
+            },
+
+            create_type_g {
+                sql_a: "CREATE TYPE bug_status AS ENUM ('open');",
+                sql_b: "CREATE TYPE bug_status AS ENUM ('new', 'open', 'closed');",
+                expect: "ALTER TYPE bug_status\nADD\n  VALUE 'new' BEFORE 'open';\n\nALTER TYPE bug_status\nADD\n  VALUE 'closed';",
+            },
+
+            create_extension_a {
                 sql_a: "CREATE EXTENSION hstore;",
                 sql_b: "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
                 expect: "DROP EXTENSION hstore;\n\nCREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
-            }],
-            |ast_a, ast_b| ast_a.diff(&ast_b),
-        );
-    }
+            },
 
-    #[test]
-    fn diff_create_domain() {
-        run_test_cases(
-            vec![TestCase {
-                dialect: Dialect::PostgreSql,
+            => |ast_a, ast_b| {
+                ast_a.diff(&ast_b)
+            }
+        );
+
+        test_case!(
+            @dialect(Dialect::Generic)
+
+            create_domain_a {
                 sql_a: "",
                 sql_b: "CREATE DOMAIN email AS VARCHAR(255) CHECK (VALUE ~ '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$');",
                 expect: "CREATE DOMAIN email AS VARCHAR(255) CHECK (\n  VALUE ~ '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'\n);",
-            }],
-            |ast_a, ast_b| ast_a.diff(&ast_b),
-        );
-    }
+            },
 
-    #[test]
-    fn diff_edit_domain() {
-        run_test_cases(
-            vec![TestCase {
-                dialect: Dialect::PostgreSql,
+            edit_domain_a {
                 sql_a: "CREATE DOMAIN positive_int AS INTEGER CHECK (VALUE > 0);",
                 sql_b: "CREATE DOMAIN positive_int AS BIGINT CHECK (VALUE > 0 AND VALUE < 1000000);",
                 expect: "DROP DOMAIN IF EXISTS positive_int;\n\nCREATE DOMAIN positive_int AS BIGINT CHECK (\n  VALUE > 0\n  AND VALUE < 1000000\n);",
-            }],
-            |ast_a, ast_b| ast_a.diff(&ast_b),
+            },
+
+            => |ast_a, ast_b| {
+                ast_a.diff(&ast_b)
+            }
         );
     }
 
-    #[test]
-    fn apply_create_table() {
-        run_test_cases(
-            vec![TestCase {
-                dialect: Dialect::Generic,
+    mod migrate {
+        use super::*;
+
+        test_case!(
+            @dialect(Dialect::Generic)
+
+            create_table_a {
                 sql_a: "CREATE TABLE bar (id INT PRIMARY KEY);",
                 sql_b: "CREATE TABLE foo (id INT PRIMARY KEY);",
                 expect: "CREATE TABLE bar (id INT PRIMARY KEY);\n\nCREATE TABLE foo (id INT PRIMARY KEY);",
-            }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b),
-        );
-    }
+            },
 
-    #[test]
-    fn apply_drop_table() {
-        run_test_cases(
-            vec![TestCase {
-                dialect: Dialect::Generic,
+            drop_table_a {
                 sql_a: "CREATE TABLE bar (id INT PRIMARY KEY)",
                 sql_b: "DROP TABLE bar; CREATE TABLE foo (id INT PRIMARY KEY)",
                 expect: "CREATE TABLE foo (id INT PRIMARY KEY);",
-            }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b),
-        );
-    }
+            },
 
-    #[test]
-    fn apply_alter_table_add_column() {
-        run_test_cases(
-            vec![TestCase {
-                dialect: Dialect::Generic,
+            alter_table_add_column_a {
                 sql_a: "CREATE TABLE bar (id INT PRIMARY KEY)",
                 sql_b: "ALTER TABLE bar ADD COLUMN bar TEXT",
                 expect: "CREATE TABLE bar (id INT PRIMARY KEY, bar TEXT);",
-            }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b),
-        );
-    }
+            },
 
-    #[test]
-    fn apply_alter_table_drop_column() {
-        run_test_cases(
-            vec![TestCase {
-                dialect: Dialect::Generic,
+            alter_table_drop_column_a {
                 sql_a: "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY)",
                 sql_b: "ALTER TABLE bar DROP COLUMN bar",
                 expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
-            }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b),
-        );
-    }
+            },
 
-    #[test]
-    fn apply_alter_table_drop_columns_snowflake() {
-        run_test_cases(
-            vec![TestCase {
-                dialect: Dialect::Snowflake,
-                sql_a: "CREATE TABLE bar (foo TEXT, bar TEXT, id INT PRIMARY KEY)",
-                sql_b: "ALTER TABLE bar DROP COLUMN foo, bar",
-                expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
-            }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b),
-        );
-    }
+            alter_table_alter_column_a {
+                sql_a: "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY)",
+                sql_b: "ALTER TABLE bar ALTER COLUMN bar SET NOT NULL",
+                expect: "CREATE TABLE bar (bar TEXT NOT NULL, id INT PRIMARY KEY);",
+            },
 
-    #[test]
-    fn apply_alter_table_alter_column() {
-        run_test_cases(
-            vec![
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY)",
-                    sql_b: "ALTER TABLE bar ALTER COLUMN bar SET NOT NULL",
-                    expect: "CREATE TABLE bar (bar TEXT NOT NULL, id INT PRIMARY KEY);",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TABLE bar (bar TEXT NOT NULL, id INT PRIMARY KEY)",
-                    sql_b: "ALTER TABLE bar ALTER COLUMN bar DROP NOT NULL",
-                    expect: "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY);",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TABLE bar (bar TEXT NOT NULL DEFAULT 'foo', id INT PRIMARY KEY)",
-                    sql_b: "ALTER TABLE bar ALTER COLUMN bar DROP DEFAULT",
-                    expect: "CREATE TABLE bar (bar TEXT NOT NULL, id INT PRIMARY KEY);",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY)",
-                    sql_b: "ALTER TABLE bar ALTER COLUMN bar SET DATA TYPE INTEGER",
-                    expect: "CREATE TABLE bar (bar INTEGER, id INT PRIMARY KEY);",
-                },
-                TestCase {
-                    dialect: Dialect::PostgreSql,
-                    sql_a: "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY)",
-                    sql_b: "ALTER TABLE bar ALTER COLUMN bar SET DATA TYPE timestamp with time zone\n USING timestamp with time zone 'epoch' + foo_timestamp * interval '1 second'",
-                    expect: "CREATE TABLE bar (bar TIMESTAMP WITH TIME ZONE, id INT PRIMARY KEY);",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TABLE bar (bar INTEGER, id INT PRIMARY KEY)",
-                    sql_b: "ALTER TABLE bar ALTER COLUMN bar ADD GENERATED BY DEFAULT AS IDENTITY",
-                    expect: "CREATE TABLE bar (\n  bar INTEGER GENERATED BY DEFAULT AS IDENTITY,\n  id INT PRIMARY KEY\n);",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TABLE bar (bar INTEGER, id INT PRIMARY KEY)",
-                    sql_b: "ALTER TABLE bar ALTER COLUMN bar ADD GENERATED ALWAYS AS IDENTITY (START WITH 10)",
-                    expect: "CREATE TABLE bar (\n  bar INTEGER GENERATED ALWAYS AS IDENTITY (START WITH 10),\n  id INT PRIMARY KEY\n);",
-                },
-            ],
-            |ast_a, ast_b| ast_a.migrate(&ast_b),
-        );
-    }
+            alter_table_alter_column_b {
+                sql_a: "CREATE TABLE bar (bar TEXT NOT NULL, id INT PRIMARY KEY)",
+                sql_b: "ALTER TABLE bar ALTER COLUMN bar DROP NOT NULL",
+                expect: "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY);",
+            },
 
-    #[test]
-    fn apply_create_index() {
-        run_test_cases(
-            vec![
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE UNIQUE INDEX title_idx ON films (title);",
-                    sql_b: "CREATE INDEX code_idx ON films (code);",
-                    expect: "CREATE UNIQUE INDEX title_idx ON films(title);\n\nCREATE INDEX code_idx ON films(code);",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE UNIQUE INDEX title_idx ON films (title);",
-                    sql_b: "DROP INDEX title_idx;",
-                    expect: "",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE UNIQUE INDEX title_idx ON films (title);",
-                    sql_b: "DROP INDEX title_idx;CREATE INDEX code_idx ON films (code);",
-                    expect: "CREATE INDEX code_idx ON films(code);",
-                },
-            ],
-            |ast_a, ast_b| ast_a.migrate(&ast_b),
-        );
-    }
+            alter_table_alter_column_c {
+                sql_a: "CREATE TABLE bar (bar TEXT NOT NULL DEFAULT 'foo', id INT PRIMARY KEY)",
+                sql_b: "ALTER TABLE bar ALTER COLUMN bar DROP DEFAULT",
+                expect: "CREATE TABLE bar (bar TEXT NOT NULL, id INT PRIMARY KEY);",
+            },
 
-    #[test]
-    fn apply_alter_create_type() {
-        run_test_cases(
-            vec![TestCase {
-                dialect: Dialect::Generic,
+            alter_table_alter_column_d {
+                sql_a: "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY)",
+                sql_b: "ALTER TABLE bar ALTER COLUMN bar SET DATA TYPE INTEGER",
+                expect: "CREATE TABLE bar (bar INTEGER, id INT PRIMARY KEY);",
+            },
+
+            alter_table_alter_column_f {
+                sql_a: "CREATE TABLE bar (bar INTEGER, id INT PRIMARY KEY)",
+                sql_b: "ALTER TABLE bar ALTER COLUMN bar ADD GENERATED BY DEFAULT AS IDENTITY",
+                expect: "CREATE TABLE bar (\n  bar INTEGER GENERATED BY DEFAULT AS IDENTITY,\n  id INT PRIMARY KEY\n);",
+            },
+
+            alter_table_alter_column_g {
+                sql_a: "CREATE TABLE bar (bar INTEGER, id INT PRIMARY KEY)",
+                sql_b: "ALTER TABLE bar ALTER COLUMN bar ADD GENERATED ALWAYS AS IDENTITY (START WITH 10)",
+                expect: "CREATE TABLE bar (\n  bar INTEGER GENERATED ALWAYS AS IDENTITY (START WITH 10),\n  id INT PRIMARY KEY\n);",
+            },
+
+            create_index_a {
+                sql_a: "CREATE UNIQUE INDEX title_idx ON films (title);",
+                sql_b: "CREATE INDEX code_idx ON films (code);",
+                expect: "CREATE UNIQUE INDEX title_idx ON films(title);\n\nCREATE INDEX code_idx ON films(code);",
+            },
+
+            create_index_b {
+                sql_a: "CREATE UNIQUE INDEX title_idx ON films (title);",
+                sql_b: "DROP INDEX title_idx;",
+                expect: "",
+            },
+
+            create_index_c {
+                sql_a: "CREATE UNIQUE INDEX title_idx ON films (title);",
+                sql_b: "DROP INDEX title_idx;CREATE INDEX code_idx ON films (code);",
+                expect: "CREATE INDEX code_idx ON films(code);",
+            },
+
+            alter_create_type_a {
                 sql_a: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
                 sql_b: "CREATE TYPE compfoo AS (f1 int, f2 text);",
                 expect: "CREATE TYPE bug_status AS ENUM ('open', 'closed');\n\nCREATE TYPE compfoo AS (f1 INT, f2 TEXT);",
-            }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b),
-        );
-    }
+            },
 
-    #[test]
-    fn apply_alter_type_rename() {
-        run_test_cases(
-            vec![TestCase {
-                dialect: Dialect::Generic,
+            alter_type_rename_a {
                 sql_a: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
                 sql_b: "ALTER TYPE bug_status RENAME TO issue_status",
                 expect: "CREATE TYPE issue_status AS ENUM ('open', 'closed');",
-            }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b),
-        );
-    }
+            },
 
-    #[test]
-    fn apply_alter_type_add_value() {
-        run_test_cases(
-            vec![
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TYPE bug_status AS ENUM ('open');",
-                    sql_b: "ALTER TYPE bug_status ADD VALUE 'new' BEFORE 'open';",
-                    expect: "CREATE TYPE bug_status AS ENUM ('new', 'open');",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TYPE bug_status AS ENUM ('open');",
-                    sql_b: "ALTER TYPE bug_status ADD VALUE 'closed' AFTER 'open';",
-                    expect: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
-                },
-                TestCase {
-                    dialect: Dialect::Generic,
-                    sql_a: "CREATE TYPE bug_status AS ENUM ('open');",
-                    sql_b: "ALTER TYPE bug_status ADD VALUE 'closed';",
-                    expect: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
-                },
-            ],
-            |ast_a, ast_b| ast_a.migrate(&ast_b),
-        );
-    }
+            alter_type_add_value_a {
+                sql_a: "CREATE TYPE bug_status AS ENUM ('open');",
+                sql_b: "ALTER TYPE bug_status ADD VALUE 'new' BEFORE 'open';",
+                expect: "CREATE TYPE bug_status AS ENUM ('new', 'open');",
+            },
 
-    #[test]
-    fn apply_alter_type_rename_value() {
-        run_test_cases(
-            vec![TestCase {
-                dialect: Dialect::Generic,
+            alter_type_add_value_b {
+                sql_a: "CREATE TYPE bug_status AS ENUM ('open');",
+                sql_b: "ALTER TYPE bug_status ADD VALUE 'closed' AFTER 'open';",
+                expect: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
+            },
+
+            alter_type_add_value_c {
+                sql_a: "CREATE TYPE bug_status AS ENUM ('open');",
+                sql_b: "ALTER TYPE bug_status ADD VALUE 'closed';",
+                expect: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
+            },
+
+            alter_type_rename_value_a {
                 sql_a: "CREATE TYPE bug_status AS ENUM ('new', 'closed');",
                 sql_b: "ALTER TYPE bug_status RENAME VALUE 'new' TO 'open';",
                 expect: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
-            }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b),
-        );
-    }
+            },
 
-    #[test]
-    fn apply_create_extension() {
-        run_test_cases(
-            vec![TestCase {
-                dialect: Dialect::Generic,
+            create_extension_a {
                 sql_a: "CREATE EXTENSION hstore;",
                 sql_b: "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
                 expect: "CREATE EXTENSION hstore;\n\nCREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
-            }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b),
-        );
-    }
+            },
 
-    #[test]
-    fn apply_create_domain() {
-        run_test_cases(
-            vec![TestCase {
-                dialect: Dialect::PostgreSql,
+            => |ast_a, ast_b| {
+                ast_a.migrate(&ast_b)
+            }
+        );
+
+        test_case!(
+            @dialect(Dialect::PostgreSql)
+
+            alter_table_alter_column_e {
+                sql_a: "CREATE TABLE bar (bar TEXT, id INT PRIMARY KEY)",
+                sql_b: "ALTER TABLE bar ALTER COLUMN bar SET DATA TYPE timestamp with time zone\n USING timestamp with time zone 'epoch' + foo_timestamp * interval '1 second'",
+                expect: "CREATE TABLE bar (bar TIMESTAMP WITH TIME ZONE, id INT PRIMARY KEY);",
+            },
+
+            create_domain_a {
                 sql_a: "CREATE DOMAIN positive_int AS INTEGER CHECK (VALUE > 0);",
                 sql_b: "CREATE DOMAIN email AS VARCHAR(255) CHECK (VALUE ~ '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$');",
                 expect: "CREATE DOMAIN positive_int AS INTEGER CHECK (VALUE > 0);\n\nCREATE DOMAIN email AS VARCHAR(255) CHECK (\n  VALUE ~ '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'\n);",
-            }],
-            |ast_a, ast_b| ast_a.migrate(&ast_b),
+            },
+
+            => |ast_a, ast_b| {
+                ast_a.migrate(&ast_b)
+            }
+        );
+
+        test_case!(
+            @dialect(Dialect::Snowflake)
+
+            alter_table_drop_columns {
+                sql_a: "CREATE TABLE bar (foo TEXT, bar TEXT, id INT PRIMARY KEY)",
+                sql_b: "ALTER TABLE bar DROP COLUMN foo, bar",
+                expect: "CREATE TABLE bar (id INT PRIMARY KEY);",
+            },
+
+            => |ast_a, ast_b| {
+                ast_a.migrate(&ast_b)
+            }
         );
     }
 }
