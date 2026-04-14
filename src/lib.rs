@@ -379,22 +379,28 @@ mod tests {
                 expect: "CREATE UNIQUE INDEX title_idx ON films(title);\n\nCREATE INDEX code_idx ON films(code);",
             },
 
-            create_index_b {
+            drop_index_a {
                 sql_a: "CREATE UNIQUE INDEX title_idx ON films (title);",
                 sql_b: "DROP INDEX title_idx;",
                 expect: "",
             },
 
-            create_index_c {
+            drop_index_b {
                 sql_a: "CREATE UNIQUE INDEX title_idx ON films (title);",
                 sql_b: "DROP INDEX title_idx;CREATE INDEX code_idx ON films (code);",
                 expect: "CREATE INDEX code_idx ON films(code);",
             },
 
-            alter_create_type_a {
+            create_type_a {
                 sql_a: "CREATE TYPE bug_status AS ENUM ('open', 'closed');",
                 sql_b: "CREATE TYPE compfoo AS (f1 int, f2 text);",
                 expect: "CREATE TYPE bug_status AS ENUM ('open', 'closed');\n\nCREATE TYPE compfoo AS (f1 INT, f2 TEXT);",
+            },
+
+            drop_type_a {
+                sql_a: "CREATE TYPE bug_status AS ENUM ('open', 'closed'); CREATE TYPE compfoo AS (f1 int, f2 text);",
+                sql_b: "DROP TYPE bug_status;",
+                expect: "CREATE TYPE compfoo AS (f1 INT, f2 TEXT);",
             },
 
             alter_type_rename_a {
@@ -433,6 +439,12 @@ mod tests {
                 expect: "CREATE EXTENSION hstore;\n\nCREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
             },
 
+            drop_extension_a {
+                sql_a: "CREATE EXTENSION hstore; CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
+                sql_b: "DROP EXTENSION hstore;",
+                expect: "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
+            },
+
             => |ast_a, ast_b| {
                 Some(ast_a.migrate(&ast_b)).transpose()
             }
@@ -451,6 +463,12 @@ mod tests {
                 sql_a: "CREATE DOMAIN positive_int AS INTEGER CHECK (VALUE > 0);",
                 sql_b: "CREATE DOMAIN email AS VARCHAR(255) CHECK (VALUE ~ '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$');",
                 expect: "CREATE DOMAIN positive_int AS INTEGER CHECK (VALUE > 0);\n\nCREATE DOMAIN email AS VARCHAR(255) CHECK (\n  VALUE ~ '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'\n);",
+            },
+
+            drop_domain_a {
+                sql_a: "CREATE DOMAIN positive_int AS INTEGER CHECK (VALUE > 0); CREATE DOMAIN above_ten AS INTEGER CHECK (VALUE > 10);",
+                sql_b: "DROP DOMAIN above_ten;",
+                expect: "CREATE DOMAIN positive_int AS INTEGER CHECK (VALUE > 0);",
             },
 
             => |ast_a, ast_b| {

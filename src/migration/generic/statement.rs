@@ -134,18 +134,47 @@ pub fn migrate_create_type<Dialect: StatementMigrator>(
 
 pub fn migrate_create_extension<Dialect: StatementMigrator>(
     _dialect: &Dialect,
-    _a: &CreateExtension,
-    _b: &Statement,
+    a: &CreateExtension,
+    sb: &Statement,
 ) -> Result<Vec<Statement>> {
-    todo!()
+    match sb {
+        Statement::DropExtension(b) => {
+            assert!(
+                b.names.contains(&a.name),
+                "attempt to DROP EXTENSION {:?} for {}",
+                b.names,
+                a.name
+            );
+            Ok(Vec::with_capacity(0))
+        }
+        _ => Err(MigrateError::builder()
+            .kind(MigrateErrorKind::NotImplemented)
+            .statement_a(a.clone().into())
+            .statement_b(sb.clone())
+            .build()),
+    }
 }
 
 pub fn migrate_create_domain<Dialect: StatementMigrator>(
     _dialect: &Dialect,
-    _a: &CreateDomain,
-    _b: &Statement,
+    a: &CreateDomain,
+    sb: &Statement,
 ) -> Result<Vec<Statement>> {
-    todo!()
+    match sb {
+        Statement::DropDomain(b) => {
+            assert_eq!(
+                a.name, b.name,
+                "attempt to DROP DOMAIN {} for {}",
+                b.name, a.name
+            );
+            Ok(Vec::with_capacity(0))
+        }
+        _ => Err(MigrateError::builder()
+            .kind(MigrateErrorKind::NotImplemented)
+            .statement_a(a.clone().into())
+            .statement_b(sb.clone())
+            .build()),
+    }
 }
 
 pub fn migrate_alter_table<Dialect: StatementMigrator>(
